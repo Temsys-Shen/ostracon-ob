@@ -61,6 +61,8 @@ interface OstraconPacketRecord {
   requestId: string;
   clientId: string;
   messageType: string;
+  version: number;
+  autoSynced: boolean;
 }
 
 interface OstraconRecordMeta {
@@ -69,6 +71,8 @@ interface OstraconRecordMeta {
   requestId?: string;
   clientId?: string;
   messageType?: string;
+  version?: number;
+  autoSynced?: boolean;
 }
 
 interface OstraconMessage {
@@ -78,6 +82,28 @@ interface OstraconMessage {
   payload?: unknown;
   event?: string;
   clientId?: string;
+}
+
+interface OstraconNotebookSummary {
+  id: string;
+  title: string;
+  source: string;
+  selected?: boolean;
+  cardCount?: number;
+}
+
+interface OstraconCardSummary {
+  id: string;
+  title: string;
+  excerpt: string;
+  comment: string;
+  sourceAnchor: string;
+  selected?: boolean;
+  hasImage?: boolean;
+  hasHandwriting?: boolean;
+  colorIndex?: number;
+  tag?: string;
+  children?: OstraconCardSummary[];
 }
 
 interface LogEntry {
@@ -196,8 +222,13 @@ function buildPacketMarkdown(packet: OstraconPacket, record: OstraconPacketRecor
       lines.push("ostracon_tags:");
       for (const tag of tags) lines.push(`  - ${JSON.stringify(tag)}`);
     }
+    lines.push("ostracon_note_ids:");
+    for (const obj of packet.objects || []) {
+      lines.push(`  - ${JSON.stringify(obj.id)}`);
+    }
     lines.push("---", "");
     lines.push(packet.notes.trimEnd());
+    appendObjectLinks(lines, packet);
     return lines.join("\n");
   }
 
@@ -216,18 +247,38 @@ function buildPacketMarkdown(packet: OstraconPacket, record: OstraconPacketRecor
   lines.push(`ostracon_object_count: ${Array.isArray(packet.objects) ? packet.objects.length : 0}`);
   lines.push("ostracon_tags:");
   for (const tag of tags) lines.push(`  - ${JSON.stringify(tag)}`);
+  lines.push("ostracon_note_ids:");
+  for (const obj of packet.objects || []) {
+    lines.push(`  - ${JSON.stringify(obj.id)}`);
+  }
   lines.push("---", "");
   lines.push(`# ${packet.source?.title || packet.id}`, "");
   lines.push("## Summary", "");
   lines.push(packet.summary ? packet.summary : "未填写摘要", "");
   lines.push("", "## Objects");
   for (const object of packet.objects || []) {
-    lines.push(`### ${object.kind || "Card"}`);
+    lines.push(`### ${object.kind || "Card"} <!-- ostracon_noteid:${object.id} -->`);
     lines.push(`- Title: ${object.title || ""}`, `- Excerpt: ${object.excerpt || ""}`, `- Comment: ${object.comment || ""}`);
-    lines.push(`- Source Anchor: ${object.sourceAnchor || ""}`, `- Has Image: ${object.hasImage ? "yes" : "no"}`, `- Has Handwriting: ${object.hasHandwriting ? "yes" : "no"}`, "");
+    lines.push(`- Source Anchor: ${object.sourceAnchor || ""}`);
+    if (object.sourceAnchor) lines.push(`- MarginNote Link: [Open in MarginNote](${object.sourceAnchor})`);
+    lines.push(`- Has Image: ${object.hasImage ? "yes" : "no"}`, `- Has Handwriting: ${object.hasHandwriting ? "yes" : "no"}`, "");
   }
   lines.push("## Raw Packet", "```json", JSON.stringify(packet, null, 2), "```", "");
   return lines.join("\n");
+}
+
+function appendObjectLinks(lines: string[], packet: OstraconPacket): void {
+  const linkedObjects = (packet.objects || []).filter(object => object.sourceAnchor);
+  if (linkedObjects.length === 0) return;
+  lines.push("", "## MarginNote Links", "");
+  for (const object of linkedObjects) {
+    const label = object.title || object.excerpt || object.id || "MarginNote Card";
+    lines.push(`- [${escapeMarkdownLinkText(label)}](${object.sourceAnchor})`);
+  }
+}
+
+function escapeMarkdownLinkText(value: string): string {
+  return String(value || "").replace(/[[\]\\]/g, "\\$&").replace(/\s+/g, " ").trim() || "MarginNote Card";
 }
 
 function buildPacketRecord(packet: OstraconPacket, filePath: string, meta: OstraconRecordMeta = {}): OstraconPacketRecord {
@@ -237,6 +288,8 @@ function buildPacketRecord(packet: OstraconPacket, filePath: string, meta: Ostra
     source: normalized.source, tags: normalized.tags as string[],
     receivedAt: meta.receivedAt || nowIso(), transport: meta.transport || "ws",
     requestId: meta.requestId || "", clientId: meta.clientId || "", messageType: meta.messageType || "command",
+    version: meta.version ?? 1,
+    autoSynced: meta.autoSynced ?? false,
   };
 }
 
@@ -247,11 +300,12 @@ function buildConnectionUrl(settings: OstraconSettings, sessionId: string): stri
   return `ws://${host}:${port}?token=${token}&session=${encodeURIComponent(sessionId || "")}`;
 }
 
-function buildHelloPayload(settings: OstraconSettings, sessionId: string) {
+function buildHelloPayload(settings: OstraconSettings, sessionId: string, vaultName?: string) {
   return {
     protocolVersion: PROTOCOL_VERSION, pluginId: PLUGIN_ID, sessionId,
     serverTime: nowIso(), capabilities: ["hello", "ping", "pong", "event", "command", "sync_request", "sync_result", "ack", "error"],
     outputFolder: settings.outputFolder || DEFAULT_OUTPUT_FOLDER,
+    vaultName: vaultName || "",
   };
 }
 
@@ -267,5 +321,6 @@ export {
 };
 export type {
   OstraconSettings, OstraconSource, OstraconObject, OstraconPacket, OstraconPacketRecord,
-  OstraconRecordMeta, OstraconMessage, LogEntry,
+  OstraconRecordMeta, OstraconMessage, OstraconNotebookSummary, OstraconCardSummary,
+  LogEntry,
 };

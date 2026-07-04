@@ -5,9 +5,12 @@ import {
   buildHelloPayload,
   buildConnectionUrl,
   createSessionId,
+  createId,
   normalizePacket,
   nowIso,
+  type OstraconCardSummary,
   type OstraconMessage,
+  type OstraconNotebookSummary,
   type OstraconPacket,
   type OstraconPacketRecord,
 } from "./contract";
@@ -26,7 +29,12 @@ type PluginLike = {
     filePath: string;
     receivedAt: string;
   }>;
+  getVaultName: () => string;
   ingestPacket: (packet: OstraconPacket, meta?: Partial<OstraconPacketRecord>) => Promise<OstraconPacketRecord>;
+  handleCardUpdated: (payload: {
+    noteId: string; title: string; excerpt: string; comment: string;
+    sourceAnchor: string; version: number; hasImage?: boolean; hasHandwriting?: boolean;
+  }) => Promise<void>;
   logLine: (level: string, message: string) => void;
 };
 
@@ -42,6 +50,12 @@ type CachedFrames = {
   receivedAt: string;
 };
 
+type PendingClientRequest = {
+  resolve: (payload: unknown) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
 class OstraconWsBridge {
   plugin: PluginLike;
   httpServer: http.Server | null;
@@ -50,6 +64,8 @@ class OstraconWsBridge {
   sessionId: string;
   heartbeatTimer: ReturnType<typeof setInterval> | null;
   processedRequests: Map<string, CachedFrames>;
+  clientState: Map<WebSocket, ClientState>;
+  pendingClientRequests: Map<string, PendingClientRequest>;
   started: boolean;
 
   constructor(plugin: PluginLike) {
@@ -60,6 +76,8 @@ class OstraconWsBridge {
     this.sessionId = "";
     this.heartbeatTimer = null;
     this.processedRequests = new Map();
+    this.clientState = new Map();
+    this.pendingClientRequests = new Map();
     this.started = false;
   }
 
@@ -113,6 +131,8 @@ class OstraconWsBridge {
       }
     }
     this.clients.clear();
+    this.clientState.clear();
+    this.rejectPendingClientRequests(new Error("Ostracon server stopped"));
 
     if (this.wss) {
       await new Promise<void>((resolve) => this.wss?.close(() => resolve()));
@@ -173,6 +193,7 @@ class OstraconWsBridge {
       };
 
       this.clients.add(ws);
+      this.clientState.set(ws, client);
 
       const socket = ws as WebSocket & { isAlive?: boolean };
       socket.isAlive = true;
@@ -184,7 +205,7 @@ class OstraconWsBridge {
       this.send(ws, {
         type: "hello",
         requestId: `hello-${client.clientId}`,
-        payload: buildHelloPayload(this.plugin.settings, this.sessionId),
+        payload: buildHelloPayload(this.plugin.settings, this.sessionId, this.plugin.getVaultName()),
       });
 
       ws.on("message", async (raw) => {
@@ -222,6 +243,7 @@ class OstraconWsBridge {
 
       ws.on("close", () => {
         this.clients.delete(ws);
+        this.clientState.delete(ws);
       });
     });
   }
@@ -236,7 +258,9 @@ class OstraconWsBridge {
 
     client.lastSeenAt = nowIso();
 
-    if (message.requestId && this.processedRequests.has(message.requestId)) {
+    const isPendingClientResponse = Boolean(message.requestId && this.pendingClientRequests.has(message.requestId));
+
+    if (!isPendingClientResponse && message.requestId && this.processedRequests.has(message.requestId)) {
       const cached = this.processedRequests.get(message.requestId);
       if (cached) {
         for (const frame of cached.frames) {
@@ -312,11 +336,19 @@ class OstraconWsBridge {
         this.plugin.logLine("info", `client:${message.type}`);
         break;
       }
+      case "sync_result": {
+        this.resolvePendingClientRequest(message);
+        break;
+      }
+      case "error": {
+        this.rejectPendingClientRequest(message);
+        break;
+      }
       default:
         throw new Error(`Unsupported message type: ${message.type}`);
     }
 
-    if (message.requestId) {
+    if (!isPendingClientResponse && message.requestId && frames.length > 0) {
       this.processedRequests.set(message.requestId, {
         frames,
         receivedAt: nowIso(),
@@ -344,12 +376,16 @@ class OstraconWsBridge {
 
     switch (command) {
       case "submitPacket": {
-        const packet = normalizePacket(message.payload as OstraconPacket);
+        const pkt = message.payload as Record<string, unknown>;
+        const autoSynced = Boolean(pkt?.autoSynced);
+        const packetData = pkt?.packet || pkt;
+        const packet = normalizePacket(packetData as OstraconPacket);
         const record = await this.plugin.ingestPacket(packet, {
           transport: "ws",
           requestId: message.requestId || "",
           clientId: message.clientId || "",
           messageType: "command",
+          autoSynced,
         });
         enqueue({
           type: "sync_result",
@@ -366,6 +402,18 @@ class OstraconWsBridge {
         });
         break;
       }
+      case "cardUpdated": {
+        await this.plugin.handleCardUpdated(message.payload as {
+          noteId: string; title: string; excerpt: string; comment: string;
+          sourceAnchor: string; version: number; hasImage?: boolean; hasHandwriting?: boolean;
+        });
+        enqueue({
+          type: "ack",
+          requestId: message.requestId || "",
+          payload: { ok: true, command: "cardUpdated", noteId: (message.payload as Record<string, unknown>)?.noteId || "" },
+        });
+        break;
+      }
       default:
         throw new Error(`Unsupported command: ${command}`);
     }
@@ -376,6 +424,111 @@ class OstraconWsBridge {
       return;
     }
     ws.send(JSON.stringify(message));
+  }
+
+  getOpenClients(): WebSocket[] {
+    return Array.from(this.clients).filter((client) => client.readyState === WebSocket.OPEN);
+  }
+
+  getActiveClient(): WebSocket {
+    const client = this.getOpenClients()[0];
+    if (!client) {
+      throw new Error("没有已连接的MarginNote客户端");
+    }
+    return client;
+  }
+
+  requestClientCommand(command: string, payload: unknown = {}, timeoutMs = 12000): Promise<unknown> {
+    const ws = this.getActiveClient();
+    const state = this.clientState.get(ws);
+    const requestId = createId(command);
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingClientRequests.delete(requestId);
+        reject(new Error(`MN命令超时: ${command}`));
+      }, timeoutMs);
+
+      this.pendingClientRequests.set(requestId, {
+        resolve,
+        reject,
+        timer,
+      });
+
+      this.send(ws, {
+        type: "command",
+        command,
+        requestId,
+        clientId: state ? state.clientId : "",
+        payload,
+      });
+    });
+  }
+
+  async listNotebooks(): Promise<OstraconNotebookSummary[]> {
+    const payload = await this.requestClientCommand("listNotebooks");
+    if (!payload || typeof payload !== "object" || !Array.isArray((payload as { notebooks?: unknown }).notebooks)) {
+      throw new Error("MN返回的学习集列表格式不正确");
+    }
+    return (payload as { notebooks: OstraconNotebookSummary[] }).notebooks;
+  }
+
+  async listCards(notebookId: string): Promise<OstraconCardSummary[]> {
+    const payload = await this.requestClientCommand("listCards", { notebookId });
+    if (!payload || typeof payload !== "object" || !Array.isArray((payload as { cards?: unknown }).cards)) {
+      throw new Error("MN返回的卡片列表格式不正确");
+    }
+    return (payload as { cards: OstraconCardSummary[] }).cards;
+  }
+
+  async fetchCards(cardIds: string[], format: string): Promise<OstraconPacketRecord> {
+    const payload = await this.requestClientCommand("fetchCards", { cardIds, format }, 20000);
+    if (!payload || typeof payload !== "object" || !(payload as { packet?: unknown }).packet) {
+      throw new Error("MN没有返回可导入的数据包");
+    }
+
+    const packet = normalizePacket((payload as { packet: OstraconPacket }).packet);
+    return this.plugin.ingestPacket(packet, {
+      transport: "pull",
+      requestId: "",
+      clientId: "",
+      messageType: "command",
+    });
+  }
+
+  resolvePendingClientRequest(message: OstraconMessage): void {
+    if (!message.requestId) {
+      return;
+    }
+    const pending = this.pendingClientRequests.get(message.requestId);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.pendingClientRequests.delete(message.requestId);
+    pending.resolve(message.payload);
+  }
+
+  rejectPendingClientRequest(message: OstraconMessage): void {
+    if (!message.requestId) {
+      return;
+    }
+    const pending = this.pendingClientRequests.get(message.requestId);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.pendingClientRequests.delete(message.requestId);
+    const payload = message.payload as { message?: string } | undefined;
+    pending.reject(new Error(payload && payload.message ? payload.message : "MN返回错误"));
+  }
+
+  rejectPendingClientRequests(error: Error): void {
+    for (const [requestId, pending] of this.pendingClientRequests.entries()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+      this.pendingClientRequests.delete(requestId);
+    }
   }
 }
 
