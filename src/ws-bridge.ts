@@ -8,35 +8,14 @@ import {
   createId,
   normalizePacket,
   nowIso,
+  debugLog,
   type OstraconCardSummary,
   type OstraconMessage,
   type OstraconNotebookSummary,
   type OstraconPacket,
   type OstraconPacketRecord,
+  type OstraconPluginHost,
 } from "./contract";
-
-type PluginLike = {
-  settings: {
-    host: string;
-    port: number;
-    token: string;
-    outputFolder: string;
-    autoStartServer: boolean;
-  };
-  getPacketSummaries: () => Array<{
-    id: string;
-    summary: unknown;
-    filePath: string;
-    receivedAt: string;
-  }>;
-  getVaultName: () => string;
-  ingestPacket: (packet: OstraconPacket, meta?: Partial<OstraconPacketRecord>) => Promise<OstraconPacketRecord>;
-  handleCardUpdated: (payload: {
-    noteId: string; title: string; excerpt: string; comment: string;
-    sourceAnchor: string; version: number; hasImage?: boolean; hasHandwriting?: boolean;
-  }) => Promise<void>;
-  logLine: (level: string, message: string) => void;
-};
 
 type ClientState = {
   ws: WebSocket;
@@ -57,7 +36,7 @@ type PendingClientRequest = {
 };
 
 class OstraconWsBridge {
-  plugin: PluginLike;
+  plugin: OstraconPluginHost;
   httpServer: http.Server | null;
   wss: WebSocketServer | null;
   clients: Set<WebSocket>;
@@ -68,7 +47,7 @@ class OstraconWsBridge {
   pendingClientRequests: Map<string, PendingClientRequest>;
   started: boolean;
 
-  constructor(plugin: PluginLike) {
+  constructor(plugin: OstraconPluginHost) {
     this.plugin = plugin;
     this.httpServer = null;
     this.wss = null;
@@ -244,6 +223,10 @@ class OstraconWsBridge {
       ws.on("close", () => {
         this.clients.delete(ws);
         this.clientState.delete(ws);
+        if (this.pendingClientRequests.size > 0) {
+          const pendingCmds = Array.from(this.pendingClientRequests.keys()).join(", ");
+          debugLog(`❌ MN 断连，Pending 请求尚未收到响应: ${pendingCmds}`);
+        }
       });
     });
   }
@@ -405,10 +388,10 @@ class OstraconWsBridge {
       case "cardUpdated": {
         await this.plugin.handleCardUpdated(message.payload as {
           noteId: string; title: string; excerpt: string; comment: string;
-          sourceAnchor: string; version: number; hasImage?: boolean; hasHandwriting?: boolean;
+          sourceAnchor: string; version: number; filePath?: string; format?: string; markdownSection?: string; canvasText?: string; hasImage?: boolean; hasHandwriting?: boolean;
         });
         enqueue({
-          type: "ack",
+          type: "sync_result",
           requestId: message.requestId || "",
           payload: { ok: true, command: "cardUpdated", noteId: (message.payload as Record<string, unknown>)?.noteId || "" },
         });
@@ -442,6 +425,8 @@ class OstraconWsBridge {
     const ws = this.getActiveClient();
     const state = this.clientState.get(ws);
     const requestId = createId(command);
+
+    debugLog(`▶ send: ${command} requestId=${requestId} payload=${JSON.stringify(payload)}`);
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -481,25 +466,11 @@ class OstraconWsBridge {
     return (payload as { cards: OstraconCardSummary[] }).cards;
   }
 
-  async fetchCards(cardIds: string[], format: string): Promise<OstraconPacketRecord> {
-    const payload = await this.requestClientCommand("fetchCards", { cardIds, format }, 20000);
-    if (!payload || typeof payload !== "object" || !(payload as { packet?: unknown }).packet) {
-      throw new Error("MN没有返回可导入的数据包");
-    }
-
-    const packet = normalizePacket((payload as { packet: OstraconPacket }).packet);
-    return this.plugin.ingestPacket(packet, {
-      transport: "pull",
-      requestId: "",
-      clientId: "",
-      messageType: "command",
-    });
-  }
-
   resolvePendingClientRequest(message: OstraconMessage): void {
     if (!message.requestId) {
       return;
     }
+    debugLog(`✔ recv: ${message.requestId}`);
     const pending = this.pendingClientRequests.get(message.requestId);
     if (!pending) {
       return;

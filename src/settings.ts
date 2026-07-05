@@ -1,17 +1,10 @@
 import { App, Plugin, PluginSettingTab, Setting, Notice, normalizePath } from "obsidian";
-import { createToken, type OstraconSettings } from "./contract";
-
-type OstraconPluginLike = {
-  settings: OstraconSettings;
-  saveSettings: () => Promise<void>;
-  restartServer: () => Promise<void>;
-  getConnectionUrl: () => string;
-};
+import { createToken, type OstraconPluginHost } from "./contract";
 
 class OstraconSettingTab extends PluginSettingTab {
-  plugin: OstraconPluginLike;
+  plugin: OstraconPluginHost;
 
-  constructor(app: App, plugin: OstraconPluginLike & Plugin) {
+  constructor(app: App, plugin: OstraconPluginHost & Plugin) {
     super(app, plugin);
     this.plugin = plugin;
   }

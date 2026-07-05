@@ -32,12 +32,12 @@
 
 .ostracon-settings-btn {
   margin-left: auto;
-  border: none;
   padding: 0;
   font-size: 11px;
   color: var(--text-muted);
   background: none;
   cursor: pointer;
+  user-select: none;
 }
 .ostracon-settings-btn:hover { color: var(--text-normal); }
 
@@ -93,17 +93,71 @@
   gap: 2px;
 }
 
+.ostracon-card-group.is-collapsed .ostracon-card-list {
+  display: none;
+}
+
+/* ── Group Head ── */
+
 .ostracon-group-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 2px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ostracon-group-head input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.ostracon-collapse-arrow {
+  font-size: 8px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.ostracon-group-label {
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
-  padding: 4px 2px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.ostracon-group-content-btn {
+  padding: 1px 3px;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  opacity: 0.4;
+  flex-shrink: 0;
+  line-height: 1;
+  user-select: none;
+  transition: opacity 120ms;
+}
+.ostracon-group-content-btn:hover,
+.ostracon-group-content-btn.is-active {
+  opacity: 1;
+  color: var(--text-normal);
+}
+
+/* ── Card Item ── */
 
 .ostracon-card-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 5px 6px;
@@ -141,6 +195,17 @@
   flex: 1;
   min-width: 0;
   color: var(--text-normal);
+}
+
+.ostracon-card-excerpt {
+  width: 100%;
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 2px 0 0 22px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── Action bar ── */

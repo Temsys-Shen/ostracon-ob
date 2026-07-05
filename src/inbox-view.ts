@@ -1,26 +1,13 @@
 import { ItemView, Notice, WorkspaceLeaf, Modal, SuggestModal, App, TFile, Menu } from "obsidian";
-import { VIEW_TYPE_INBOX, type OstraconCardSummary, type OstraconNotebookSummary, type OstraconPacketRecord } from "./contract";
+import { VIEW_TYPE_INBOX, ensureFolder, type OstraconPluginHost, type OstraconCardSummary, type OstraconNotebookSummary } from "./contract";
 
 type Tab = "notebook" | "tag" | "color";
-
-type OstraconPluginLike = {
-  state: { selectedPacketId: string };
-  getPacketRecords: () => OstraconPacketRecord[];
-  getSelectedPacket: () => OstraconPacketRecord | null;
-  getClientCount: () => number;
-  isServerRunning: () => boolean;
-  openSettings: () => void;
-  listMnNotebooks: () => Promise<OstraconNotebookSummary[]>;
-  listMnCards: (notebookId: string) => Promise<OstraconCardSummary[]>;
-  fetchMnCards: (cardIds: string[], format: string) => Promise<OstraconPacketRecord>;
-  getCardsContent: (cardIds: string[], format: string) => Promise<string>;
-};
 
 const MN_COLOR_HEX = ["#FFFFAA", "#BEFFBE", "#ADD2FF", "#FFAABE", "#FFFF00", "#00FF00", "#00BEFF", "#FF0000", "#FF8000", "#008040", "#003EB3", "#CF1B11", "#FFFFFF", "#DADADA", "#B4B4B4", "#C39DE0"];
 const MN_COLOR_NAMES = ["淡黄", "淡绿", "淡蓝", "淡粉", "黄色", "绿色", "青色", "红色", "橙色", "深绿", "深蓝", "深红", "白色", "浅灰", "中灰", "紫色"];
 
 class OstraconInboxView extends ItemView {
-  plugin: OstraconPluginLike;
+  plugin: OstraconPluginHost;
   activeTab: Tab = "notebook";
   cards: OstraconCardSummary[] = [];
   notebooks: OstraconNotebookSummary[] = [];
@@ -33,7 +20,20 @@ class OstraconInboxView extends ItemView {
   connCheckTimer: ReturnType<typeof setInterval> | null = null;
   isConnected = false;
 
-  constructor(leaf: WorkspaceLeaf, plugin: OstraconPluginLike) {
+  collapsedGroups: Set<string> = new Set();
+  expandedContentGroups: Set<string> = new Set();
+  cardOrder: string[] = [];
+  lastClickedIndex = -1;
+  isShiftDown = false;
+  isMetaDown = false;
+
+  isDragging = false;
+  dragStartIndex = -1;
+  dragSelectionOccurred = false;
+
+  cardAreaEl: HTMLElement | null = null;
+
+  constructor(leaf: WorkspaceLeaf, plugin: OstraconPluginHost) {
     super(leaf);
     this.plugin = plugin;
   }
@@ -43,14 +43,40 @@ class OstraconInboxView extends ItemView {
   getIcon(): string { return "inbox"; }
 
   async onOpen(): Promise<void> {
+    document.addEventListener("keydown", this.onKeyDown);
+    document.addEventListener("keyup", this.onKeyUp);
+    document.addEventListener("mouseup", this.onMouseUp);
     this.render();
     this.connCheckTimer = setInterval(() => this.checkConnection(), 2000);
   }
 
   async onClose(): Promise<void> {
+    document.removeEventListener("keydown", this.onKeyDown);
+    document.removeEventListener("keyup", this.onKeyUp);
+    document.removeEventListener("mouseup", this.onMouseUp);
     if (this.connCheckTimer) clearInterval(this.connCheckTimer);
     this.contentEl.empty();
   }
+
+  onKeyDown = (e: KeyboardEvent): void => {
+    if (e.key === "Shift") this.isShiftDown = true;
+    if (e.key === "Meta" || e.key === "Control") this.isMetaDown = true;
+  };
+
+  onKeyUp = (e: KeyboardEvent): void => {
+    if (e.key === "Shift") this.isShiftDown = false;
+    if (e.key === "Meta" || e.key === "Control") this.isMetaDown = false;
+  };
+
+  onMouseUp = (): void => {
+    if (this.isDragging) {
+      this.isDragging = false;
+      if (this.dragSelectionOccurred) {
+        this.dragSelectionOccurred = false;
+        this.refresh();
+      }
+    }
+  };
 
   checkConnection(): void {
     const connected = this.plugin.isServerRunning() && this.plugin.getClientCount() > 0;
@@ -73,22 +99,46 @@ class OstraconInboxView extends ItemView {
 
     this.renderStatus();
     this.renderTabs();
-    this.renderCardArea();
+    this.cardAreaEl = contentEl.createDiv({ cls: "ostracon-card-area" });
     this.renderActionBar();
+    this.updateCardAreaContent();
+    this.restoreSearchFocus();
   }
 
-  /* ── Status ── */
+  refresh(): void {
+    if (this.cardAreaEl) {
+      this.cardAreaEl.empty();
+      this.updateCardAreaContent();
+    }
+    this.updateActionBarState();
+    this.restoreSearchFocus();
+  }
+
+  restoreSearchFocus(): void {
+    if (this.searchQuery) {
+      const input = this.contentEl.querySelector(".ostracon-search-inline") as HTMLInputElement;
+      if (input && document.activeElement !== input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    }
+  }
+
+  updateActionBarState(): void {
+    const countEl = this.contentEl.querySelector(".ostracon-count");
+    if (countEl) countEl.textContent = `已选中 ${this.selectedCardIds.size} 张`;
+    const btn = this.contentEl.querySelector(".ostracon-import-btn") as HTMLButtonElement;
+    if (btn) btn.disabled = this.selectedCardIds.size === 0;
+  }
 
   renderStatus(): void {
     const { contentEl } = this;
     const row = contentEl.createDiv({ cls: "ostracon-status-row" });
     row.createSpan({ cls: "ostracon-status-dot on" });
     row.createSpan({ cls: "ostracon-status-label", text: "MN 在线" });
-    const btn = row.createEl("button", { cls: "ostracon-settings-btn", text: "设置" });
+    const btn = row.createSpan({ cls: "ostracon-settings-btn", text: "设置", attr: { role: "button", tabindex: "0" } });
     btn.addEventListener("click", () => this.plugin.openSettings());
   }
-
-  /* ── Tabs ── */
 
   renderTabs(): void {
     const { contentEl } = this;
@@ -105,16 +155,38 @@ class OstraconInboxView extends ItemView {
       });
       btn.addEventListener("click", () => {
         this.activeTab = item.id;
+        this.expandedContentGroups.clear();
         this.render();
       });
     }
   }
 
-  /* ── Card area ── */
+  renderActionBar(): void {
+    const bar = this.contentEl.createDiv({ cls: "ostracon-action-bar" });
+    bar.createSpan({ cls: "ostracon-count", text: `已选中 ${this.selectedCardIds.size} 张` });
 
-  renderCardArea(): void {
-    const { contentEl } = this;
-    const area = contentEl.createDiv({ cls: "ostracon-card-area" });
+    const searchInput = bar.createEl("input", {
+      cls: "ostracon-search-inline",
+      type: "search",
+      placeholder: "搜索标题/摘录...",
+      value: this.searchQuery,
+    });
+    searchInput.addEventListener("input", () => {
+      this.searchQuery = searchInput.value;
+      this.refresh();
+    });
+
+    const btn = bar.createEl("button", {
+      cls: "ostracon-import-btn",
+      text: "导入到笔记",
+    });
+    btn.disabled = this.selectedCardIds.size === 0;
+    btn.addEventListener("click", () => this.doImport(Array.from(this.selectedCardIds)));
+  }
+
+  updateCardAreaContent(): void {
+    const area = this.cardAreaEl;
+    if (!area) return;
 
     if (this.loading) {
       area.createSpan({ cls: "ostracon-loading", text: "读取中..." });
@@ -130,63 +202,155 @@ class OstraconInboxView extends ItemView {
     if (displayCards.length === 0) {
       area.createSpan({
         cls: "ostracon-hint",
-        text: this.searchQuery ? "没有匹配的卡片" : this.loading ? "读取中..." : "当前笔记本没有卡片",
+        text: this.searchQuery ? "没有匹配的卡片" : "当前笔记本没有卡片",
       });
       return;
     }
 
+    let groups: { key: string; label: string; cards: OstraconCardSummary[] }[];
+
     if (this.activeTab === "notebook") {
-      this.renderNotebookView(area, displayCards);
+      groups = this.buildNotebookGroups(displayCards);
     } else if (this.activeTab === "tag") {
-      this.renderGrouped(area, displayCards, "tag");
-    } else if (this.activeTab === "color") {
-      this.renderGrouped(area, displayCards, "color");
+      groups = this.buildTagGroups(displayCards);
+    } else {
+      groups = this.buildColorGroups(displayCards);
     }
-  }
 
-  renderNotebookView(container: HTMLElement, displayCards: OstraconCardSummary[]): void {
-    const allCardIds = new Set(displayCards.map((c) => c.id));
+    this.cardOrder = groups.flatMap((g) => g.cards.map((c) => c.id));
 
-    for (const nb of this.notebooks) {
-      const nbCards = (this.notebookCards.get(nb.id) || []).filter((c) => allCardIds.has(c.id));
-      if (nbCards.length === 0) continue;
+    if (this.collapsedGroups.size === 0) {
+      for (let i = 1; i < groups.length; i++) this.collapsedGroups.add(groups[i].key);
+    }
 
-      const g = container.createDiv({ cls: "ostracon-card-group" });
-      g.createDiv({ cls: "ostracon-group-head", text: `${nb.title}（${nb.cardCount}）` });
-      const list = g.createDiv({ cls: "ostracon-card-list" });
-      for (const card of nbCards) {
-        this.renderCardItem(list, card);
-      }
+    for (const group of groups) {
+      this.renderGroup(area, group);
     }
 
     if (this.backgroundLoading) {
-      container.createSpan({ cls: "ostracon-loading", text: "正在加载其他笔记本..." });
+      area.createSpan({ cls: "ostracon-loading", text: "正在加载其他笔记本..." });
     }
   }
 
-  renderGrouped(container: HTMLElement, cards: OstraconCardSummary[], by: "tag" | "color"): void {
-    const groups = by === "tag" ? this.groupByTag(cards) : this.groupByColor(cards);
-    for (const group of groups) {
-      const g = container.createDiv({ cls: "ostracon-card-group" });
-      g.createDiv({ cls: "ostracon-group-head", text: group.label });
-      const list = g.createDiv({ cls: "ostracon-card-list" });
+  buildNotebookGroups(displayCards: OstraconCardSummary[]): { key: string; label: string; cards: OstraconCardSummary[] }[] {
+    const allCardIds = new Set(displayCards.map((c) => c.id));
+    const groups: { key: string; label: string; cards: OstraconCardSummary[] }[] = [];
+    for (const nb of this.notebooks) {
+      const nbCards = (this.notebookCards.get(nb.id) || []).filter((c) => allCardIds.has(c.id));
+      if (nbCards.length === 0) continue;
+      groups.push({ key: `nb:${nb.id}`, label: nb.title, cards: nbCards });
+    }
+    return groups;
+  }
+
+  buildTagGroups(displayCards: OstraconCardSummary[]): { key: string; label: string; cards: OstraconCardSummary[] }[] {
+    const map = new Map<string, OstraconCardSummary[]>();
+    for (const c of displayCards) {
+      const key = c.tag || "未分类";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(c);
+    }
+    return Array.from(map.entries()).map(([label, items]) => ({ key: `tag:${label}`, label, cards: items }));
+  }
+
+  buildColorGroups(displayCards: OstraconCardSummary[]): { key: string; label: string; cards: OstraconCardSummary[] }[] {
+    const map = new Map<string, OstraconCardSummary[]>();
+    for (const c of displayCards) {
+      const key = MN_COLOR_NAMES[c.colorIndex ?? 0] ?? `颜色${c.colorIndex}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(c);
+    }
+    return Array.from(map.entries()).map(([label, items]) => ({ key: `color:${label}`, label, cards: items }));
+  }
+
+  renderGroup(container: HTMLElement, group: { key: string; label: string; cards: OstraconCardSummary[] }): void {
+    const g = container.createDiv({ cls: "ostracon-card-group" });
+    g.dataset.groupKey = group.key;
+
+    if (this.collapsedGroups.has(group.key)) {
+      g.addClass("is-collapsed");
+    }
+
+    this.renderGroupHead(g, group);
+
+    const list = g.createDiv({ cls: "ostracon-card-list" });
+    for (const card of group.cards) {
+      this.renderCardItem(list, card, group);
+    }
+  }
+
+  renderGroupHead(groupEl: HTMLElement, group: { key: string; label: string; cards: OstraconCardSummary[] }): void {
+    const head = groupEl.createDiv({ cls: "ostracon-group-head" });
+
+    const allSelected = group.cards.every((c) => this.selectedCardIds.has(c.id));
+    const someSelected = group.cards.some((c) => this.selectedCardIds.has(c.id));
+
+    const cb = head.createEl("input", { type: "checkbox" });
+    cb.checked = allSelected;
+    cb.indeterminate = someSelected && !allSelected;
+    cb.addEventListener("change", (e) => {
+      e.stopPropagation();
       for (const card of group.cards) {
-        this.renderCardItem(list, card);
+        if (cb.checked) this.selectedCardIds.add(card.id);
+        else this.selectedCardIds.delete(card.id);
       }
-    }
-  }
+      this.refresh();
+    });
+    cb.addEventListener("click", (e) => e.stopPropagation());
 
-  renderCardItem(container: HTMLElement, card: OstraconCardSummary): void {
-    const item = container.createDiv({
-      cls: `ostracon-card-item${this.selectedCardIds.has(card.id) ? " is-checked" : ""}`,
+    const isCollapsed = this.collapsedGroups.has(group.key);
+    const arrow = head.createSpan({
+      cls: "ostracon-collapse-arrow",
+      text: isCollapsed ? "▶" : "▼",
     });
 
+    head.createSpan({
+      cls: "ostracon-group-label",
+      text: `${group.label}（${group.cards.length}）`,
+    });
+
+    const isExpanded = this.expandedContentGroups.has(group.key);
+    const contentBtn = head.createSpan({
+      cls: `ostracon-group-content-btn${isExpanded ? " is-active" : ""}`,
+      text: "≡",
+      attr: { role: "button", tabindex: "0" },
+    });
+    contentBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (this.expandedContentGroups.has(group.key)) {
+        this.expandedContentGroups.delete(group.key);
+      } else {
+        this.expandedContentGroups.add(group.key);
+      }
+      this.refresh();
+    });
+
+    head.addEventListener("click", (e) => {
+      if ((e.target as HTMLElement).closest("input, .ostracon-group-content-btn")) return;
+      if (this.collapsedGroups.has(group.key)) {
+        this.collapsedGroups.delete(group.key);
+      } else {
+        this.collapsedGroups.add(group.key);
+      }
+      this.refresh();
+    });
+  }
+
+  renderCardItem(container: HTMLElement, card: OstraconCardSummary, group: { key: string; cards: OstraconCardSummary[] }): void {
+    const isChecked = this.selectedCardIds.has(card.id);
+    const item = container.createDiv({
+      cls: `ostracon-card-item${isChecked ? " is-checked" : ""}`,
+    });
+    item.dataset.cardId = card.id;
+    item.dataset.groupKey = group.key;
+
     const cb = item.createEl("input", { type: "checkbox" });
-    cb.checked = this.selectedCardIds.has(card.id);
+    cb.checked = isChecked;
     cb.addEventListener("change", () => {
       if (cb.checked) this.selectedCardIds.add(card.id);
       else this.selectedCardIds.delete(card.id);
-      this.render();
+      this.lastClickedIndex = this.getCardOrderIndex(card.id);
+      this.refresh();
     });
 
     const dot = item.createSpan({ cls: "ostracon-card-dot" });
@@ -196,8 +360,83 @@ class OstraconInboxView extends ItemView {
 
     item.createSpan({ cls: "ostracon-card-title", text: card.title || "(无标题)" });
 
+    const showExcerpt = this.expandedContentGroups.has(group.key);
+    if (showExcerpt && card.excerpt) {
+      item.createDiv({
+        cls: "ostracon-card-excerpt",
+        text: card.excerpt.length > 60 ? card.excerpt.slice(0, 60) + "…" : card.excerpt,
+      });
+    }
+
+    item.addEventListener("mousedown", (e) => {
+      if ((e.target as HTMLElement).tagName === "INPUT") return;
+
+      if (this.isShiftDown) {
+        e.preventDefault();
+        this.handleShiftClick(card.id);
+        return;
+      }
+
+      if (this.isMetaDown) {
+        e.preventDefault();
+        this.handleMetaClick(card.id);
+        return;
+      }
+
+      this.isDragging = true;
+      this.dragSelectionOccurred = false;
+      this.dragStartIndex = this.getCardOrderIndex(card.id);
+      this.lastClickedIndex = this.dragStartIndex;
+    });
+
+    item.addEventListener("mouseenter", () => {
+      if (!this.isDragging) return;
+      if (this.dragStartIndex < 0) return;
+
+      const currentIdx = this.getCardOrderIndex(card.id);
+      if (currentIdx < 0) return;
+
+      if (!this.dragSelectionOccurred) {
+        this.dragSelectionOccurred = true;
+      }
+
+      this.selectedCardIds.clear();
+      this.selectRange(this.dragStartIndex, currentIdx);
+
+      const cardItems = this.cardAreaEl?.querySelectorAll(".ostracon-card-item");
+      if (cardItems) {
+        for (const el of cardItems) {
+          const id = (el as HTMLElement).dataset.cardId;
+          if (id) {
+            const checked = this.selectedCardIds.has(id);
+            (el.querySelector('input[type="checkbox"]') as HTMLInputElement).checked = checked;
+            el.toggleClass("is-checked", checked);
+          }
+        }
+      }
+
+      const groupEl = this.cardAreaEl?.querySelector(`.ostracon-card-group[data-group-key="${group.key}"]`);
+      if (groupEl) {
+        const headCb = groupEl.querySelector(".ostracon-group-head input[type='checkbox']") as HTMLInputElement;
+        if (headCb) {
+          const cardEls = groupEl.querySelectorAll(".ostracon-card-item");
+          let checkedCount = 0;
+          for (const el of cardEls) {
+            const id = (el as HTMLElement).dataset.cardId;
+            if (id && this.selectedCardIds.has(id)) checkedCount++;
+          }
+          headCb.checked = checkedCount === cardEls.length;
+          headCb.indeterminate = checkedCount > 0 && checkedCount < cardEls.length;
+        }
+      }
+
+      this.updateActionBarState();
+    });
+
     item.addEventListener("click", (e) => {
       if ((e.target as HTMLElement).tagName === "INPUT") return;
+      if (this.isShiftDown || this.isMetaDown) return;
+      if (this.dragSelectionOccurred) return;
       new CardDetailModal(this.app, card, () => this.doImport([card.id])).open();
     });
 
@@ -212,7 +451,8 @@ class OstraconInboxView extends ItemView {
           this.selectedCardIds.has(card.id)
             ? this.selectedCardIds.delete(card.id)
             : this.selectedCardIds.add(card.id);
-          this.render();
+          this.lastClickedIndex = this.getCardOrderIndex(card.id);
+          this.refresh();
         })
       );
       if (this.selectedCardIds.size > 0) {
@@ -224,33 +464,41 @@ class OstraconInboxView extends ItemView {
     });
   }
 
-  /* ── Action bar ── */
-
-  renderActionBar(): void {
-    const { contentEl } = this;
-    const bar = contentEl.createDiv({ cls: "ostracon-action-bar" });
-    bar.createSpan({ cls: "ostracon-count", text: `已选中 ${this.selectedCardIds.size} 张` });
-
-    const searchInput = bar.createEl("input", {
-      cls: "ostracon-search-inline",
-      type: "search",
-      placeholder: "搜索标题/摘录...",
-      value: this.searchQuery,
-    });
-    searchInput.addEventListener("input", () => {
-      this.searchQuery = searchInput.value;
-      this.render();
-    });
-
-    const btn = bar.createEl("button", {
-      cls: "ostracon-import-btn",
-      text: "导入到笔记",
-    });
-    btn.disabled = this.selectedCardIds.size === 0;
-    btn.addEventListener("click", () => this.doImport(Array.from(this.selectedCardIds)));
+  getCardOrderIndex(cardId: string): number {
+    return this.cardOrder.indexOf(cardId);
   }
 
-  /* ── Disconnected ── */
+  handleShiftClick(cardId: string): void {
+    const currentIdx = this.getCardOrderIndex(cardId);
+    if (currentIdx < 0) return;
+
+    if (this.lastClickedIndex >= 0) {
+      this.selectRange(this.lastClickedIndex, currentIdx);
+    } else {
+      this.selectedCardIds.add(cardId);
+    }
+    this.lastClickedIndex = currentIdx;
+    this.refresh();
+  }
+
+  handleMetaClick(cardId: string): void {
+    if (this.selectedCardIds.has(cardId)) {
+      this.selectedCardIds.delete(cardId);
+    } else {
+      this.selectedCardIds.add(cardId);
+    }
+    this.lastClickedIndex = this.getCardOrderIndex(cardId);
+    this.refresh();
+  }
+
+  selectRange(from: number, to: number): void {
+    const [start, end] = from <= to ? [from, to] : [to, from];
+    for (let i = start; i <= end; i++) {
+      if (this.cardOrder[i]) {
+        this.selectedCardIds.add(this.cardOrder[i]);
+      }
+    }
+  }
 
   renderDisconnected(): void {
     const { contentEl } = this;
@@ -260,8 +508,6 @@ class OstraconInboxView extends ItemView {
     const btn = el.createEl("button", { text: "打开设置", cls: "ostracon-empty-btn" });
     btn.addEventListener("click", () => this.plugin.openSettings());
   }
-
-  /* ── Data ── */
 
   async fetchCards(): Promise<void> {
     this.loading = true;
@@ -315,9 +561,9 @@ class OstraconInboxView extends ItemView {
     this.loading = true;
     this.render();
     try {
-      const content = await this.plugin.getCardsContent(cardIds, "markdown");
+      const content = await this.plugin.fetchCards(cardIds, "markdown");
       const folder = targetPath.split("/").slice(0, -1).join("/");
-      if (folder) await this.ensureFolder(folder);
+      if (folder) await ensureFolder(this.app, folder);
 
       const existing = this.app.vault.getAbstractFileByPath(targetPath);
       if (existing instanceof TFile) {
@@ -365,17 +611,6 @@ class OstraconInboxView extends ItemView {
     });
   }
 
-  async ensureFolder(path: string): Promise<void> {
-    const segments = path.split("/").filter(Boolean);
-    let current = "";
-    for (const seg of segments) {
-      current = current ? `${current}/${seg}` : seg;
-      if (!this.app.vault.getAbstractFileByPath(current)) {
-        await this.app.vault.createFolder(current);
-      }
-    }
-  }
-
   getFilteredCards(): OstraconCardSummary[] {
     if (!this.searchQuery) return this.cards;
     const q = this.searchQuery.toLowerCase();
@@ -386,29 +621,7 @@ class OstraconInboxView extends ItemView {
         (c.comment || "").toLowerCase().includes(q)
     );
   }
-
-  groupByTag(cards: OstraconCardSummary[]): { label: string; cards: OstraconCardSummary[] }[] {
-    const map = new Map<string, OstraconCardSummary[]>();
-    for (const c of cards) {
-      const key = c.tag || "未分类";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(c);
-    }
-    return Array.from(map.entries()).map(([label, items]) => ({ label, cards: items }));
-  }
-
-  groupByColor(cards: OstraconCardSummary[]): { label: string; cards: OstraconCardSummary[] }[] {
-    const map = new Map<string, OstraconCardSummary[]>();
-    for (const c of cards) {
-      const key = MN_COLOR_NAMES[c.colorIndex ?? 0] ?? `颜色${c.colorIndex}`;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(c);
-    }
-    return Array.from(map.entries()).map(([label, items]) => ({ label, cards: items }));
-  }
 }
-
-/* ── Detail Modal ── */
 
 class CardDetailModal extends Modal {
   card: OstraconCardSummary;

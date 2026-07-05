@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { normalizePath } from "obsidian";
+import { normalizePath, type App } from "obsidian";
 
 const PLUGIN_ID = "ostracon-ob";
 const VIEW_TYPE_INBOX = "ostracon-inbox-view";
@@ -111,6 +111,35 @@ interface LogEntry {
   level: string;
   message: string;
   at: string;
+}
+
+export interface OstraconPluginHost {
+  settings: OstraconSettings;
+  saveSettings: () => Promise<void>;
+  restartServer: () => Promise<void>;
+  getConnectionUrl: () => string;
+  getPacketSummaries: () => Array<{
+    id: string;
+    summary: unknown;
+    filePath: string;
+    receivedAt: string;
+  }>;
+  getVaultName: () => string;
+  ingestPacket: (packet: OstraconPacket, meta?: OstraconRecordMeta) => Promise<OstraconPacketRecord>;
+  handleCardUpdated: (payload: {
+    noteId: string; title: string; excerpt: string; comment: string;
+    sourceAnchor: string; version: number; filePath?: string; format?: string; markdownSection?: string; canvasText?: string; hasImage?: boolean; hasHandwriting?: boolean;
+  }) => Promise<void>;
+  logLine: (level: string, message: string) => void;
+  state: { selectedPacketId: string };
+  getPacketRecords: () => OstraconPacketRecord[];
+  getSelectedPacket: () => OstraconPacketRecord | null;
+  getClientCount: () => number;
+  isServerRunning: () => boolean;
+  openSettings: () => void;
+  listMnNotebooks: () => Promise<OstraconNotebookSummary[]>;
+  listMnCards: (notebookId: string) => Promise<OstraconCardSummary[]>;
+  fetchCards: (cardIds: string[], format: string) => Promise<string>;
 }
 
 function createToken(): string {
@@ -313,11 +342,38 @@ function buildAckPayload(message: OstraconMessage) {
   return { requestId: message.requestId || "", ok: true, type: message.type || "unknown", command: message.command || "" };
 }
 
+async function ensureFolder(app: App, folderPath: string): Promise<void> {
+  const segments = folderPath.split("/").filter(Boolean);
+  let current = "";
+  for (const segment of segments) {
+    current = current ? `${current}/${segment}` : segment;
+    if (!app.vault.getAbstractFileByPath(current)) {
+      await app.vault.createFolder(current);
+    }
+  }
+}
+
+let debugLogPath = "";
+
+function setDebugLogPath(p: string) {
+  debugLogPath = p;
+}
+
+function debugLog(msg: string) {
+  if (!debugLogPath) return;
+  try {
+    const fs = require("fs") as typeof import("fs");
+    fs.appendFileSync(debugLogPath, `[${new Date().toISOString()}] ${msg}\n`, "utf8");
+  } catch {}
+}
+
 export {
   PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT,
   createToken, createSessionId, nowIso, sanitizeSegment, normalizeTags, createId,
   createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath,
   buildPacketMarkdown, buildPacketRecord, buildConnectionUrl, buildHelloPayload, buildAckPayload,
+  ensureFolder,
+  setDebugLogPath, debugLog,
 };
 export type {
   OstraconSettings, OstraconSource, OstraconObject, OstraconPacket, OstraconPacketRecord,

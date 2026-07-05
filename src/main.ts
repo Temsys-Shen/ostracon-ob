@@ -1,8 +1,9 @@
+import path from "path";
 import { Notice, Plugin, TFile, normalizePath } from "obsidian";
 import {
   VIEW_TYPE_INBOX, createDefaultSettings, createToken, normalizePacket,
   buildPacketFilePath, buildPacketMarkdown, buildPacketRecord, buildConnectionUrl,
-  summarizePacket, createId,
+  summarizePacket, createId, ensureFolder, setDebugLogPath, debugLog,
   type OstraconCardSummary, type OstraconNotebookSummary,
   type OstraconObject, type OstraconSettings, type OstraconPacket, type OstraconPacketRecord, type OstraconRecordMeta,
 } from "./contract";
@@ -23,9 +24,15 @@ class OstraconPlugin extends Plugin {
   state!: OstraconPluginState;
   bridge!: OstraconWsBridge;
   statusBarItem!: StatusBarItem;
-  noteIdMap: Map<string, string> = new Map();
+  noteIdMap: Map<string, Map<string, string>> = new Map();
+  internalWritePaths: Set<string> = new Set();
 
   async onload(): Promise<void> {
+    const vaultPath = (this.app.vault.adapter as { basePath?: string }).basePath;
+    if (vaultPath) {
+      setDebugLogPath(path.join(vaultPath, "ostracon-debug.log"));
+      debugLog("Ostracon 插件加载");
+    }
     const saved = await this.loadData() as { settings?: Partial<OstraconSettings>; packets?: OstraconPacketRecord[]; selectedPacketId?: string; logs?: OstraconPluginState["logs"] } | null;
     this.settings = Object.assign(createDefaultSettings(), saved?.settings ?? {});
     if (!this.settings.token) this.settings.token = createToken();
@@ -51,14 +58,6 @@ class OstraconPlugin extends Plugin {
 
     if (this.settings.autoStartServer) await this.startServer();
 
-    this.registerEvent(this.app.vault.on("modify", (file) => {
-      if (!(file instanceof TFile) || !file.path.startsWith(this.settings.outputFolder)) return;
-      if (file.extension !== "md") return;
-      const hasAutoSync = this.state.packets.some(r => r.filePath === file.path && r.autoSynced);
-      if (!hasAutoSync) return;
-      this.queuePushCardChanges(file.path);
-    }));
-
     this.app.workspace.onLayoutReady(() => { this.refreshViews(); });
     this.logLine("info", "plugin loaded");
   }
@@ -69,8 +68,12 @@ class OstraconPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     this.settings.outputFolder = normalizePath(this.settings.outputFolder || "Ostracon/Inbox");
-    await this.saveData({ settings: this.settings, packets: this.state.packets, selectedPacketId: this.state.selectedPacketId, logs: this.state.logs });
+    await this.persistState();
     this.updateStatusBar();
+  }
+
+  private async persistState(): Promise<void> {
+    await this.saveData({ settings: this.settings, packets: this.state.packets, selectedPacketId: this.state.selectedPacketId, logs: this.state.logs });
   }
 
   async restartServer(): Promise<void> {
@@ -138,7 +141,7 @@ class OstraconPlugin extends Plugin {
   logLine(level: string, message: string): void {
     const entry = { id: createId("log"), level, message, at: new Date().toISOString() };
     this.state.logs = [entry, ...this.state.logs].slice(0, 100);
-    this.saveData({ settings: this.settings, packets: this.state.packets, selectedPacketId: this.state.selectedPacketId, logs: this.state.logs });
+    this.persistState();
     this.refreshViews();
   }
 
@@ -152,7 +155,7 @@ class OstraconPlugin extends Plugin {
 
   selectPacket(packetId: string): void {
     this.state.selectedPacketId = packetId;
-    this.saveData({ settings: this.settings, packets: this.state.packets, selectedPacketId: this.state.selectedPacketId, logs: this.state.logs });
+    this.persistState();
   }
 
   getPacketSummaries(): Array<{ id: string; summary: ReturnType<typeof summarizePacket>; filePath: string; receivedAt: string }> {
@@ -175,14 +178,7 @@ class OstraconPlugin extends Plugin {
     return this.bridge.listCards(notebookId);
   }
 
-  async fetchMnCards(cardIds: string[], format: string): Promise<OstraconPacketRecord> {
-    if (!this.isServerRunning()) {
-      await this.startServer();
-    }
-    return this.bridge.fetchCards(cardIds, format);
-  }
-
-  async getCardsContent(cardIds: string[], format: string): Promise<string> {
+  async fetchCards(cardIds: string[], format: string): Promise<string> {
     if (!this.isServerRunning()) {
       await this.startServer();
     }
@@ -196,57 +192,37 @@ class OstraconPlugin extends Plugin {
     return buildPacketMarkdown(normalized, record);
   }
 
-  queuePushCardChanges(filePath: string): void {
-    if (this.pushCardChangesDebounceTimer) clearTimeout(this.pushCardChangesDebounceTimer);
-    this.pushCardChangesDebounceTimer = setTimeout(() => this.pushCardChanges(filePath), 3000);
-  }
-
-  async pushCardChanges(filePath: string): Promise<void> {
-    const file = this.app.vault.getAbstractFileByPath(filePath);
-    if (!(file instanceof TFile)) return;
-    if (!this.bridge.isRunning || this.bridge.getOpenClients().length === 0) return;
-
-    const content = await this.app.vault.read(file);
-    if (!content.includes("ostracon_note_ids:")) return;
-
-    const noteIds: string[] = [];
-    for (const raw of content.matchAll(/^\s*-\s+"([^"]+)"$/gm)) {
-      if (raw[1]) noteIds.push(raw[1]);
-    }
-    if (noteIds.length === 0) return;
-
-    for (const id of noteIds) {
-      const section = this.findCardSection(content, id);
-      if (!section) continue;
-      const block = content.slice(section.start, section.end);
-      const title = block.match(/- Title:\s*(.*)/)?.[1]?.trim() || "";
-      const excerpt = block.match(/- Excerpt:\s*(.*)/)?.[1]?.trim() || "";
-      const comment = block.match(/- Comment:\s*(.*)/)?.[1]?.trim() || "";
-      const existingRecords = this.state.packets.filter((r: OstraconPacketRecord) => r.filePath === filePath);
-      const nextVersion = existingRecords.length > 0 ? Math.max(...existingRecords.map((r: OstraconPacketRecord) => r.version)) + 1 : 1;
-      try {
-        await this.bridge.requestClientCommand("syncCard", { noteId: id, title, excerpt, comment, version: nextVersion });
-        for (const r of this.state.packets) {
-          if (r.filePath === filePath && r.version < nextVersion) r.version = nextVersion;
-        }
-      } catch (e) {
-        this.logLine("warn", `推送卡片到MN失败: ${id}`);
-      }
-    }
-    await this.saveData({ settings: this.settings, packets: this.state.packets, selectedPacketId: this.state.selectedPacketId, logs: this.state.logs });
-  }
-
   rebuildNoteIdMap(): void {
     this.noteIdMap = new Map();
     for (const record of this.state.packets) {
       const filePath = record.filePath;
       for (const obj of record.packet.objects || []) {
-        this.noteIdMap.set(obj.id, filePath);
+        this.setNoteFilePath(obj.id, filePath, record.packet.format);
       }
     }
   }
 
-  pushCardChangesDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  normalizePacketFormat(format?: string): string {
+    return format === "canvas" ? "canvas" : "markdown";
+  }
+
+  formatFromFilePath(filePath: string): string {
+    return filePath.toLowerCase().endsWith(".canvas") ? "canvas" : "markdown";
+  }
+
+  setNoteFilePath(noteId: string, filePath: string, format?: string): void {
+    const key = this.normalizePacketFormat(format || this.formatFromFilePath(filePath));
+    const existing = this.noteIdMap.get(noteId) || new Map<string, string>();
+    existing.set(key, filePath);
+    this.noteIdMap.set(noteId, existing);
+  }
+
+  getNoteFilePath(noteId: string, format?: string): string {
+    const paths = this.noteIdMap.get(noteId);
+    if (!paths) return "";
+    const key = this.normalizePacketFormat(format);
+    return paths.get(key) || "";
+  }
 
   fileLocks: Map<string, Promise<void>> = new Map();
 
@@ -259,48 +235,107 @@ class OstraconPlugin extends Plugin {
     return release!;
   }
 
-  async handleCardUpdated(payload: { noteId: string; title: string; excerpt: string; comment: string; sourceAnchor: string; version: number; hasImage?: boolean; hasHandwriting?: boolean }): Promise<void> {
-    const filePath = this.noteIdMap.get(payload.noteId);
+  async handleCardUpdated(payload: { noteId: string; title: string; excerpt: string; comment: string; sourceAnchor: string; version: number; filePath?: string; format?: string; markdownSection?: string; canvasText?: string; hasImage?: boolean; hasHandwriting?: boolean }): Promise<void> {
+    const targetFormat = this.normalizePacketFormat(payload.format || (payload.filePath ? this.formatFromFilePath(payload.filePath) : undefined));
+    const filePath = payload.filePath || this.getNoteFilePath(payload.noteId, targetFormat);
     if (!filePath) throw new Error(`noteId 未在本地记录: ${payload.noteId}`);
 
     const file = this.app.vault.getAbstractFileByPath(filePath);
     if (!(file instanceof TFile)) throw new Error(`文件不存在: ${filePath}`);
 
-    const object: OstraconObject = {
-      id: payload.noteId, kind: "Card", title: payload.title || "",
-      excerpt: payload.excerpt || "", comment: payload.comment || "",
-      sourceAnchor: payload.sourceAnchor || "", hasImage: Boolean(payload.hasImage),
-      hasHandwriting: Boolean(payload.hasHandwriting),
-    };
-
     const unlock = await this.lockFile(filePath);
     try {
       let content = await this.app.vault.read(file);
+      if (filePath.toLowerCase().endsWith(".canvas")) {
+        if (!payload.canvasText) throw new Error(`缺少MN渲染Canvas内容: ${payload.noteId}`);
+        content = this.updateCanvasNode(content, payload.noteId, payload.canvasText);
+        await this.processInternalWrite(file, () => content);
+        this.setNoteFilePath(payload.noteId, filePath, "canvas");
+        this.logLine("info", `updated canvas node ${payload.noteId} in ${filePath}`);
+        return;
+      }
+
       const section = this.findCardSection(content, payload.noteId);
-      const newSection = this.buildCardSection(object);
+      if (!section && !content.includes(payload.noteId)) {
+        throw new Error(`文件未包含noteId: ${payload.noteId}`);
+      }
+      if (!payload.markdownSection) throw new Error(`缺少MN渲染Markdown内容: ${payload.noteId}`);
+      const newSection = payload.markdownSection.trimEnd();
 
       if (section) {
-        content = content.slice(0, section.start) + newSection + content.slice(section.end);
+        content = this.replaceCardSection(content, section, newSection);
       } else {
+        if (content.includes(payload.noteId)) {
+          throw new Error(`文件未包含可更新的noteId标题: ${payload.noteId}`);
+        }
         const at = content.lastIndexOf("## Objects");
-        const insertAt = at >= 0 ? at + "## Objects".length : 0;
+        if (at < 0) {
+          throw new Error(`文件缺少可插入的Objects区: ${filePath}`);
+        }
+        const insertAt = at + "## Objects".length;
         content = content.slice(0, insertAt) + "\n\n" + newSection + content.slice(insertAt);
       }
 
       content = content.replace(/^ostracon_version:.*$/m, `ostracon_version: ${payload.version}`);
-      await this.app.vault.process(file, () => content);
+      await this.processInternalWrite(file, () => content);
+      this.setNoteFilePath(payload.noteId, filePath, "markdown");
       this.logLine("info", `updated card ${payload.noteId} in ${filePath}`);
     } finally {
       unlock();
     }
   }
 
+  updateCanvasNode(content: string, noteId: string, text: string): string {
+    let canvas: { nodes?: Array<Record<string, unknown>>; edges?: unknown[] };
+    try {
+      canvas = JSON.parse(content) as { nodes?: Array<Record<string, unknown>>; edges?: unknown[] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Canvas JSON解析失败: ${message}`);
+    }
+
+    if (!Array.isArray(canvas.nodes)) throw new Error("Canvas缺少nodes数组");
+    const node = canvas.nodes.find(item => item.id === noteId);
+    if (!node) throw new Error(`Canvas未包含noteId节点: ${noteId}`);
+
+    node.type = "text";
+    node.text = text;
+    if (typeof node.width !== "number") node.width = 380;
+    node.height = this.estimateCanvasNodeHeight(text);
+
+    return JSON.stringify(canvas, null, 2);
+  }
+
+  replaceCardSection(content: string, section: { start: number; end: number }, newSection: string): string {
+    const before = content.slice(0, section.start);
+    const after = content.slice(section.end).replace(/^\r?\n*/, "");
+    return before + newSection + (after ? "\n\n" + after : "");
+  }
+
+  buildCanvasNodeText(object: OstraconObject): string {
+    const lines = [`## ${object.title || "未命名卡片"}`, ""];
+    if (object.excerpt) {
+      lines.push(...object.excerpt.split(/\r?\n/).map(line => line ? `> ${line}` : ">"));
+      lines.push("");
+    }
+    if (object.comment) {
+      lines.push(object.comment);
+      lines.push("");
+    }
+    return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  estimateCanvasNodeHeight(text: string): number {
+    return Math.max(140, 60 + text.split(/\r?\n/).length * 18);
+  }
+
   async ingestPacket(packet: OstraconPacket, meta?: OstraconRecordMeta): Promise<OstraconPacketRecord> {
     const normalized = normalizePacket(packet);
 
     let filePath = "";
+    const packetFormat = this.normalizePacketFormat(normalized.format);
     for (const obj of normalized.objects) {
-      const existing = this.noteIdMap.get(obj.id);
+      const existing = this.getNoteFilePath(obj.id, packetFormat);
       if (existing) { filePath = existing; break; }
     }
     if (!filePath) {
@@ -315,11 +350,9 @@ class OstraconPlugin extends Plugin {
     await this.writePacketToVault(record);
 
     this.state.packets = [record, ...this.state.packets.filter(item => item.id !== record.id)].slice(0, 100);
-    for (const obj of normalized.objects) {
-      this.noteIdMap.set(obj.id, record.filePath);
-    }
+    this.rebuildNoteIdMap();
     this.state.selectedPacketId = record.id;
-    await this.saveData({ settings: this.settings, packets: this.state.packets, selectedPacketId: this.state.selectedPacketId, logs: this.state.logs });
+    await this.persistState();
     this.refreshViews();
     this.logLine("info", `ingested packet ${record.id}`);
     return record;
@@ -327,17 +360,24 @@ class OstraconPlugin extends Plugin {
 
   async writePacketToVault(record: OstraconPacketRecord): Promise<void> {
     const folderPath = record.filePath.split("/").slice(0, -1).join("/");
-    await this.ensureFolder(folderPath);
+    await ensureFolder(this.app, folderPath);
     const existing = this.app.vault.getAbstractFileByPath(record.filePath);
     const packet = record.packet;
 
     const unlock = await this.lockFile(record.filePath);
     try {
-      if (existing instanceof TFile && packet.format !== "markdown") {
+      if (packet.format === "canvas") {
+        const content = buildPacketMarkdown(packet, record);
+        if (existing instanceof TFile) {
+          await this.processInternalWrite(existing, () => content);
+        } else {
+          await this.createInternalFile(record.filePath, content);
+        }
+      } else if (existing instanceof TFile && packet.format !== "markdown") {
         let content = await this.app.vault.read(existing);
         for (const object of packet.objects || []) {
           const section = this.findCardSection(content, object.id);
-          const newSection = this.buildCardSection(object);
+          const newSection = this.buildCardSection(object, section?.headingMark);
           if (section) {
             content = content.slice(0, section.start) + newSection + content.slice(section.end);
           } else {
@@ -347,13 +387,13 @@ class OstraconPlugin extends Plugin {
           }
         }
         content = content.replace(/^ostracon_version:.*$/m, `ostracon_version: ${record.version}`);
-        await this.app.vault.process(existing, () => content);
+        await this.processInternalWrite(existing, () => content);
       } else {
         const content = buildPacketMarkdown(packet, record);
         if (existing instanceof TFile) {
-          await this.app.vault.process(existing, () => content);
+          await this.processInternalWrite(existing, () => content);
         } else {
-          await this.app.vault.create(record.filePath, content);
+          await this.createInternalFile(record.filePath, content);
         }
       }
     } finally {
@@ -361,34 +401,106 @@ class OstraconPlugin extends Plugin {
     }
   }
 
-  findCardSection(content: string, noteId: string): { start: number; end: number } | null {
-    const escaped = noteId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(`#{2,6} [^<]*<!-- ostracon_noteid:${escaped} -->[\\s\\S]*?(?=\\n#{1,6} |\\n---|$)`);
-    const m = re.exec(content);
-    return m ? { start: m.index, end: m.index + m[0].length } : null;
-  }
-
-  buildCardSection(object: OstraconObject): string {
-    const lines = [`### ${object.kind || "Card"} <!-- ostracon_noteid:${object.id} -->`];
-    lines.push(`- Title: ${object.title || ""}`);
-    lines.push(`- Excerpt: ${object.excerpt || ""}`);
-    lines.push(`- Comment: ${object.comment || ""}`);
-    lines.push(`- Source Anchor: ${object.sourceAnchor || ""}`);
-    if (object.sourceAnchor) lines.push(`- MarginNote Link: [Open in MarginNote](${object.sourceAnchor})`);
-    lines.push(`- Has Image: ${object.hasImage ? "yes" : "no"}`);
-    lines.push(`- Has Handwriting: ${object.hasHandwriting ? "yes" : "no"}`);
-    return lines.join("\n");
-  }
-
-  async ensureFolder(folderPath: string): Promise<void> {
-    const segments = folderPath.split("/").filter(Boolean);
-    let current = "";
-    for (const segment of segments) {
-      current = current ? `${current}/${segment}` : segment;
-      if (!this.app.vault.getAbstractFileByPath(current)) {
-        await this.app.vault.createFolder(current);
-      }
+  async processInternalWrite(file: TFile, fn: (content: string) => string): Promise<void> {
+    this.internalWritePaths.add(file.path);
+    try {
+      await this.app.vault.process(file, fn);
+    } finally {
+      window.setTimeout(() => this.internalWritePaths.delete(file.path), 1000);
     }
+  }
+
+  async createInternalFile(filePath: string, content: string): Promise<void> {
+    this.internalWritePaths.add(filePath);
+    try {
+      await this.app.vault.create(filePath, content);
+    } finally {
+      window.setTimeout(() => this.internalWritePaths.delete(filePath), 1000);
+    }
+  }
+
+  findCardSection(content: string, noteId: string): { start: number; end: number; headingMark: string } | null {
+    const escaped = noteId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const headingPattern = new RegExp(`^(#{1,6})\\s+.*<!--\\s*ostracon_noteid:${escaped}\\s*-->\\s*$`);
+    const nextCardHeadingPattern = /^#{1,6}\s+.*<!--\s*ostracon_noteid:[^>]+-->\s*$/;
+    const lines = content.match(/[^\n]*(?:\n|$)/g) || [];
+    let offset = 0;
+    let start = -1;
+    let end = content.length;
+    let headingMark = "###";
+
+    for (const line of lines) {
+      const text = line.replace(/\r?\n$/, "");
+      const heading = text.match(headingPattern);
+      if (start < 0 && heading) {
+        start = offset;
+        headingMark = heading[1];
+      } else if (start >= 0 && nextCardHeadingPattern.test(text)) {
+        end = offset;
+        break;
+      }
+      offset += line.length;
+    }
+
+    return start >= 0 ? { start, end, headingMark } : null;
+  }
+
+  parseCardSection(block: string): { title: string; excerpt: string; comment: string } {
+    const structured = {
+      title: block.match(/- Title:\s*(.*)/)?.[1]?.trim(),
+      excerpt: block.match(/- Excerpt:\s*(.*)/)?.[1]?.trim(),
+      comment: block.match(/- Comment:\s*(.*)/)?.[1]?.trim(),
+    };
+    if (structured.title !== undefined || structured.excerpt !== undefined || structured.comment !== undefined) {
+      return {
+        title: structured.title || "",
+        excerpt: structured.excerpt || "",
+        comment: structured.comment || "",
+      };
+    }
+
+    const heading = block.match(/^#{1,6}\s+(.+?)\s*<!--\s*ostracon_noteid:[^>]+-->/);
+    if (!heading) throw new Error("卡片段落缺少ostracon_noteid标题");
+
+    const body = block.slice(heading[0].length).trim();
+    const lines = body.split(/\r?\n/);
+    const excerptLines: string[] = [];
+    let index = 0;
+    while (index < lines.length && lines[index].startsWith(">")) {
+      excerptLines.push(lines[index].replace(/^>\s?/, ""));
+      index++;
+    }
+    while (index < lines.length && lines[index].trim() === "") index++;
+
+    const comment = lines.slice(index)
+      .filter(line => !this.isOstraconMetadataLine(line))
+      .join("\n")
+      .trim();
+
+    return {
+      title: heading[1].trim(),
+      excerpt: excerptLines.join("\n").trim(),
+      comment,
+    };
+  }
+
+  buildCardSection(object: OstraconObject, headingMark = "###"): string {
+    const lines = [`${headingMark} ${object.title || "未命名卡片"} <!-- ostracon_noteid:${object.id} -->`, ""];
+    if (object.excerpt) {
+      lines.push(...object.excerpt.split(/\r?\n/).map(line => line ? `> ${line}` : ">"));
+      lines.push("");
+    }
+    if (object.comment) {
+      lines.push(object.comment);
+    }
+    return lines.join("\n").trimEnd();
+  }
+
+  isOstraconMetadataLine(line: string): boolean {
+    const text = line.trim();
+    return /^!\[[^\]]*\]\(.+\)$/.test(text)
+      || /^-?\s*(Source Anchor|MarginNote Link|Has Image|Has Handwriting|Comment):/i.test(text)
+      || /^-?\s*marginnote4app:\/\/note\//i.test(text);
   }
 
   async activateInboxView(): Promise<void> {
