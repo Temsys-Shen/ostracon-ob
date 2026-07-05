@@ -16,6 +16,9 @@ type OstraconPluginLike = {
   getCardsContent: (cardIds: string[], format: string) => Promise<string>;
 };
 
+const MN_COLOR_HEX = ["#FFFFAA", "#BEFFBE", "#ADD2FF", "#FFAABE", "#FFFF00", "#00FF00", "#00BEFF", "#FF0000", "#FF8000", "#008040", "#003EB3", "#CF1B11", "#FFFFFF", "#DADADA", "#B4B4B4", "#C39DE0"];
+const MN_COLOR_NAMES = ["淡黄", "淡绿", "淡蓝", "淡粉", "黄色", "绿色", "青色", "红色", "橙色", "深绿", "深蓝", "深红", "白色", "浅灰", "中灰", "紫色"];
+
 class OstraconInboxView extends ItemView {
   plugin: OstraconPluginLike;
   activeTab: Tab = "notebook";
@@ -188,8 +191,7 @@ class OstraconInboxView extends ItemView {
 
     const dot = item.createSpan({ cls: "ostracon-card-dot" });
     if (card.colorIndex !== undefined) {
-      const colors = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#3498db", "#9b59b6", "#95a5a6", "#795548"];
-      dot.style.background = colors[card.colorIndex % colors.length];
+      dot.style.background = MN_COLOR_HEX[card.colorIndex % MN_COLOR_HEX.length];
     }
 
     item.createSpan({ cls: "ostracon-card-title", text: card.title || "(无标题)" });
@@ -396,10 +398,9 @@ class OstraconInboxView extends ItemView {
   }
 
   groupByColor(cards: OstraconCardSummary[]): { label: string; cards: OstraconCardSummary[] }[] {
-    const names = ["红色", "橙色", "黄色", "绿色", "蓝色", "紫色", "灰色", "棕色"];
     const map = new Map<string, OstraconCardSummary[]>();
     for (const c of cards) {
-      const key = names[c.colorIndex ?? 0] ?? `颜色${c.colorIndex}`;
+      const key = MN_COLOR_NAMES[c.colorIndex ?? 0] ?? `颜色${c.colorIndex}`;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(c);
     }
@@ -429,8 +430,7 @@ class CardDetailModal extends Modal {
       const meta = contentEl.createDiv({ cls: "ostracon-detail-meta" });
       if (this.card.tag) meta.createSpan({ text: `标签: ${this.card.tag}`, cls: "ostracon-detail-tag" });
       if (this.card.colorIndex !== undefined) {
-        const names = ["红色", "橙色", "黄色", "绿色", "蓝色", "紫色", "灰色", "棕色"];
-        meta.createSpan({ text: `颜色: ${names[this.card.colorIndex % names.length]}`, cls: "ostracon-detail-color" });
+        meta.createSpan({ text: `颜色: ${MN_COLOR_NAMES[this.card.colorIndex % MN_COLOR_NAMES.length]}`, cls: "ostracon-detail-color" });
       }
     }
 
