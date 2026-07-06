@@ -1,5 +1,6 @@
 import { ItemView, Notice, WorkspaceLeaf, Modal, SuggestModal, App, TFile, Menu } from "obsidian";
-import { VIEW_TYPE_INBOX, ensureFolder, type OstraconPluginHost, type OstraconCardSummary, type OstraconNotebookSummary } from "./contract";
+import { VIEW_TYPE_INBOX, type ViewHost, type OstraconCardSummary, type OstraconNotebookSummary } from "./contract";
+import { ensureFolder } from "./vault-utils";
 
 type Tab = "notebook" | "tag" | "color";
 
@@ -7,7 +8,7 @@ const MN_COLOR_HEX = ["#FFFFAA", "#BEFFBE", "#ADD2FF", "#FFAABE", "#FFFF00", "#0
 const MN_COLOR_NAMES = ["淡黄", "淡绿", "淡蓝", "淡粉", "黄色", "绿色", "青色", "红色", "橙色", "深绿", "深蓝", "深红", "白色", "浅灰", "中灰", "紫色"];
 
 class OstraconInboxView extends ItemView {
-  plugin: OstraconPluginHost;
+  plugin: ViewHost;
   activeTab: Tab = "notebook";
   cards: OstraconCardSummary[] = [];
   notebooks: OstraconNotebookSummary[] = [];
@@ -33,7 +34,7 @@ class OstraconInboxView extends ItemView {
 
   cardAreaEl: HTMLElement | null = null;
 
-  constructor(leaf: WorkspaceLeaf, plugin: OstraconPluginHost) {
+  constructor(leaf: WorkspaceLeaf, plugin: ViewHost) {
     super(leaf);
     this.plugin = plugin;
   }
@@ -537,7 +538,7 @@ class OstraconInboxView extends ItemView {
             this.notebookCards.set(nb.id, nbCards);
             this.cards = [...this.cards, ...nbCards];
             this.render();
-          } catch (_) {}
+          } catch (e) { console.warn("background notebook load failed", e); }
         }
         this.backgroundLoading = false;
         this.render();

@@ -10,11 +10,13 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@types/multicast-dns": "^7.2.4",
     "@types/node": "^22.15.17",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.25.9",
     "eslint": "^9.39.4",
     "globals": "^17.6.0",
+    "multicast-dns": "^7.2.5",
     "obsidian": "latest",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.59.1",

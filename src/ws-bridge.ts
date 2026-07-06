@@ -1,21 +1,21 @@
 import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import {
-  buildAckPayload,
+  DEFAULTS, buildAckPayload,
   buildHelloPayload,
   buildConnectionUrl,
   createSessionId,
   createId,
   normalizePacket,
   nowIso,
-  debugLog,
   type OstraconCardSummary,
   type OstraconMessage,
   type OstraconNotebookSummary,
   type OstraconPacket,
   type OstraconPacketRecord,
-  type OstraconPluginHost,
+  type BridgeHost,
 } from "./contract";
+import { debugLog } from "./logger";
 
 type ClientState = {
   ws: WebSocket;
@@ -36,7 +36,7 @@ type PendingClientRequest = {
 };
 
 class OstraconWsBridge {
-  plugin: OstraconPluginHost;
+  plugin: BridgeHost;
   httpServer: http.Server | null;
   wss: WebSocketServer | null;
   clients: Set<WebSocket>;
@@ -47,7 +47,7 @@ class OstraconWsBridge {
   pendingClientRequests: Map<string, PendingClientRequest>;
   started: boolean;
 
-  constructor(plugin: OstraconPluginHost) {
+  constructor(plugin: BridgeHost) {
     this.plugin = plugin;
     this.httpServer = null;
     this.wss = null;
@@ -76,9 +76,26 @@ class OstraconWsBridge {
     this.sessionId = this.sessionId || createSessionId();
 
     await new Promise<void>((resolve, reject) => {
-      const server = http.createServer();
+      const server = http.createServer((req, res) => {
+        // Discovery endpoint for MN to find OB instances on the LAN
+        if (req.method === "GET" && req.url === "/ostracon/discover") {
+          res.writeHead(200, {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(JSON.stringify({
+            name: "Ostracon",
+            port: port,
+            version: "1",
+          }));
+          return;
+        }
+        // Other HTTP requests: not found
+        res.writeHead(404);
+        res.end();
+      });
       const port = Number(this.plugin.settings.port);
-      const host = this.plugin.settings.host || "127.0.0.1";
+      const host = this.plugin.settings.host || DEFAULTS.host;
 
       server.once("error", (error) => {
         reject(error);
@@ -157,16 +174,40 @@ class OstraconWsBridge {
 
   attachWebSocketHandlers(): void {
     this.wss?.on("connection", (ws, request) => {
-      const url = new URL(request.url ?? "", `http://${request.headers.host || "127.0.0.1"}`);
-      const token = url.searchParams.get("token");
-      if (!token || token !== this.plugin.settings.token) {
-        ws.close(4001, "Unauthorized token");
+      let clientName = "";
+      let clientId: string | null = null;
+
+      try {
+        // Build base URL safely: handle IPv6 hosts that may lack brackets in Host header
+        let baseHost = request.headers.host || DEFAULTS.host;
+        if (baseHost !== "::" && !baseHost.startsWith("[")) {
+          // Only wrap if the host part itself contains a colon (IPv6), not just the port separator
+          const lastColon = baseHost.lastIndexOf(":");
+          if (lastColon > 0) {
+            const hostPart = baseHost.substring(0, lastColon);
+            if (hostPart.includes(":")) {
+              const portPart = baseHost.substring(lastColon);
+              baseHost = `[${hostPart}]${portPart}`;
+            }
+          }
+        } else if (baseHost === "::") {
+          baseHost = "[::1]";
+        }
+        const url = new URL(request.url ?? "", `http://${baseHost}`);
+        clientName = url.searchParams.get("name") || "";
+        clientId = url.searchParams.get("clientId") || null;
+      } catch (err) {
+        debugLog(`[Ostracon] Failed to parse connection URL: ${err instanceof Error ? err.message : String(err)}`);
+        ws.close(4000, "Invalid connection URL");
         return;
       }
 
+      // Use client-provided ID, fallback to random
+      const effectiveClientId = clientId || createClientId();
+
       const client: ClientState = {
         ws,
-        clientId: createClientId(),
+        clientId: effectiveClientId,
         connectedAt: nowIso(),
         lastSeenAt: nowIso(),
       };
@@ -181,53 +222,89 @@ class OstraconWsBridge {
         client.lastSeenAt = nowIso();
       });
 
-      this.send(ws, {
-        type: "hello",
-        requestId: `hello-${client.clientId}`,
-        payload: buildHelloPayload(this.plugin.settings, this.sessionId, this.plugin.getVaultName()),
-      });
+      // Check if device needs approval before sending hello
+      const approvalRequired = !this.plugin.isDeviceApproved(effectiveClientId);
+      if (approvalRequired) {
+        this.send(ws, {
+          type: "pending_approval",
+          requestId: `approval-${effectiveClientId}`,
+          payload: { clientId: effectiveClientId, message: "等待 Obsidian 用户确认连接" },
+        });
 
-      ws.on("message", async (raw) => {
-        let message: OstraconMessage;
-        try {
-          message = JSON.parse(raw.toString("utf8")) as OstraconMessage;
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          this.send(ws, {
-            type: "error",
-            requestId: "",
-            payload: {
-              message: "Invalid JSON payload",
-              detail,
-            },
-          });
-          return;
-        }
+        this.plugin.requestApproval(effectiveClientId, clientName, {
+          onApprove: () => {
+            this.plugin.approveDevice(effectiveClientId, clientName);
+            this.send(ws, {
+              type: "approved",
+              requestId: `approval-${effectiveClientId}`,
+              payload: { ok: true, clientId: effectiveClientId },
+            });
+            this.sendHelloAndSetupMessageHandler(ws, client);
+          },
+          onDeny: () => {
+            this.send(ws, {
+              type: "error",
+              requestId: `approval-${effectiveClientId}`,
+              payload: { message: "用户拒绝了连接请求" },
+            });
+            ws.close(4003, "User denied connection");
+          },
+        });
+        return;
+      }
 
-        try {
-          await this.handleMessage(ws, client, message);
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          this.send(ws, {
-            type: "error",
-            requestId: message && message.requestId ? message.requestId : "",
-            payload: {
-              message: detail,
-              command: message && message.command ? message.command : "",
-            },
-          });
-          this.plugin.logLine("error", detail);
-        }
-      });
+      // Already approved device, proceed normally
+      this.sendHelloAndSetupMessageHandler(ws, client);
+    });
+  }
 
-      ws.on("close", () => {
-        this.clients.delete(ws);
-        this.clientState.delete(ws);
-        if (this.pendingClientRequests.size > 0) {
-          const pendingCmds = Array.from(this.pendingClientRequests.keys()).join(", ");
-          debugLog(`❌ MN 断连，Pending 请求尚未收到响应: ${pendingCmds}`);
-        }
-      });
+  private sendHelloAndSetupMessageHandler(ws: WebSocket, client: ClientState): void {
+    this.send(ws, {
+      type: "hello",
+      requestId: `hello-${client.clientId}`,
+      payload: buildHelloPayload(this.plugin.settings, this.sessionId, this.plugin.getVaultName()),
+    });
+
+    ws.on("message", async (raw) => {
+      let message: OstraconMessage;
+      try {
+        message = JSON.parse(raw.toString("utf8")) as OstraconMessage;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.send(ws, {
+          type: "error",
+          requestId: "",
+          payload: {
+            message: "Invalid JSON payload",
+            detail,
+          },
+        });
+        return;
+      }
+
+      try {
+        await this.handleMessage(ws, client, message);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.send(ws, {
+          type: "error",
+          requestId: message && message.requestId ? message.requestId : "",
+          payload: {
+            message: detail,
+            command: message && message.command ? message.command : "",
+          },
+        });
+        this.plugin.logLine("error", detail);
+      }
+    });
+
+    ws.on("close", () => {
+      this.clients.delete(ws);
+      this.clientState.delete(ws);
+      if (this.pendingClientRequests.size > 0) {
+        const pendingCmds = Array.from(this.pendingClientRequests.keys()).join(", ");
+        debugLog(`❌ MN 断连，Pending 请求尚未收到响应: ${pendingCmds}`);
+      }
     });
   }
 

@@ -1,10 +1,10 @@
 import { App, Plugin, PluginSettingTab, Setting, Notice, normalizePath } from "obsidian";
-import { createToken, type OstraconPluginHost } from "./contract";
+import { DEFAULTS, DEFAULT_OUTPUT_FOLDER, type SettingsHost } from "./contract";
 
 class OstraconSettingTab extends PluginSettingTab {
-  plugin: OstraconPluginHost;
+  plugin: SettingsHost;
 
-  constructor(app: App, plugin: OstraconPluginHost & Plugin) {
+  constructor(app: App, plugin: SettingsHost & Plugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
@@ -15,11 +15,11 @@ class OstraconSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("主机")
-      .setDesc("建议127.0.0.1")
+      .setDesc("默认 :: 监听所有地址（IPv4/IPv6），可改为具体IP")
       .addText((text) => {
         text.setValue(this.plugin.settings.host);
         text.onChange(async (value) => {
-          this.plugin.settings.host = value.trim() || "127.0.0.1";
+          this.plugin.settings.host = value.trim() || DEFAULTS.host;
           await this.plugin.saveSettings();
         });
       });
@@ -48,7 +48,7 @@ class OstraconSettingTab extends PluginSettingTab {
       .addText((text) => {
         text.setValue(this.plugin.settings.outputFolder);
         text.onChange(async (value) => {
-          this.plugin.settings.outputFolder = normalizePath(value.trim() || "Ostracon/Inbox");
+          this.plugin.settings.outputFolder = normalizePath(value.trim() || DEFAULT_OUTPUT_FOLDER);
           await this.plugin.saveSettings();
         });
       });
@@ -66,25 +66,35 @@ class OstraconSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Token")
-      .setDesc("本机连接凭据")
-      .addText((text) => {
-        text.setValue(this.plugin.settings.token);
-        text.onChange(async (value) => {
-          this.plugin.settings.token = value.trim() || createToken();
+      .setName("包含 MarginNote 回链")
+      .setDesc("在笔记末尾添加指向 MN 卡片的链接")
+      .addToggle((toggle) => {
+        toggle.setValue(Boolean(this.plugin.settings.includeBacklinks));
+        toggle.onChange(async (value) => {
+          this.plugin.settings.includeBacklinks = value;
           await this.plugin.saveSettings();
-          await this.plugin.restartServer();
-        });
-      })
-      .addButton((button) => {
-        button.setButtonText("重新生成");
-        button.onClick(async () => {
-          this.plugin.settings.token = createToken();
-          await this.plugin.saveSettings();
-          await this.plugin.restartServer();
-          this.display();
         });
       });
+
+    const approvedDevices = this.plugin.settings.approvedDevices || [];
+    if (approvedDevices.length > 0) {
+      containerEl.createEl("h4", { text: "已批准设备" });
+      for (const device of approvedDevices) {
+        new Setting(containerEl)
+          .setName(device.name || device.clientId)
+          .setDesc(`批准于 ${new Date(device.approvedAt).toLocaleString()}`)
+          .addButton((button) => {
+            button.setButtonText("移除");
+            button.onClick(async () => {
+              this.plugin.settings.approvedDevices = approvedDevices.filter(
+                (d) => d.clientId !== device.clientId,
+              );
+              await this.plugin.saveSettings();
+              this.display();
+            });
+          });
+      }
+    }
 
     new Setting(containerEl)
       .setName("连接")

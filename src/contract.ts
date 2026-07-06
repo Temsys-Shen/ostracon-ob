@@ -1,18 +1,26 @@
 import crypto from "crypto";
-import { normalizePath, type App } from "obsidian";
+import { normalizePath } from "obsidian";
 
 const PLUGIN_ID = "ostracon-ob";
 const VIEW_TYPE_INBOX = "ostracon-inbox-view";
 const PROTOCOL_VERSION = 1;
-const DEFAULT_OUTPUT_FOLDER = "Ostracon/Inbox";
+const DEFAULT_OUTPUT_FOLDER = "Marginnote";
 const DEFAULT_PORT = 27123;
+
+const DEFAULTS = {
+  host: "::",
+  transport: "ws",
+  status: "draft",
+  messageType: "command",
+} as const;
 
 interface OstraconSettings {
   host: string;
   port: number;
-  token: string;
   outputFolder: string;
   autoStartServer: boolean;
+  includeBacklinks: boolean;
+  approvedDevices: Array<{ clientId: string; name: string; approvedAt: string }>;
 }
 
 interface OstraconSource {
@@ -113,37 +121,46 @@ interface LogEntry {
   at: string;
 }
 
-export interface OstraconPluginHost {
+export interface CardUpdatedPayload {
+  noteId: string; title: string; excerpt: string; comment: string;
+  sourceAnchor: string; version: number; filePath?: string; format?: string; markdownSection?: string; canvasText?: string; hasImage?: boolean; hasHandwriting?: boolean;
+}
+
+export interface SettingsHost {
   settings: OstraconSettings;
   saveSettings: () => Promise<void>;
   restartServer: () => Promise<void>;
   getConnectionUrl: () => string;
+}
+
+export interface BridgeHost {
+  ingestPacket: (packet: OstraconPacket, meta?: OstraconRecordMeta) => Promise<OstraconPacketRecord>;
+  handleCardUpdated: (payload: CardUpdatedPayload) => Promise<void>;
+  logLine: (level: string, message: string) => void;
+  getVaultName: () => string;
   getPacketSummaries: () => Array<{
     id: string;
     summary: unknown;
     filePath: string;
     receivedAt: string;
   }>;
-  getVaultName: () => string;
-  ingestPacket: (packet: OstraconPacket, meta?: OstraconRecordMeta) => Promise<OstraconPacketRecord>;
-  handleCardUpdated: (payload: {
-    noteId: string; title: string; excerpt: string; comment: string;
-    sourceAnchor: string; version: number; filePath?: string; format?: string; markdownSection?: string; canvasText?: string; hasImage?: boolean; hasHandwriting?: boolean;
-  }) => Promise<void>;
-  logLine: (level: string, message: string) => void;
-  state: { selectedPacketId: string };
+  settings: Pick<OstraconSettings, "port" | "host" | "outputFolder" | "includeBacklinks">;
+  isDeviceApproved: (clientId: string) => boolean;
+  approveDevice: (clientId: string, name: string) => void;
+  requestApproval: (clientId: string, name: string, callbacks: { onApprove: () => void; onDeny: () => void }) => void;
+}
+
+export interface ViewHost {
+  openSettings: () => void;
+  isServerRunning: () => boolean;
+  getClientCount: () => number;
   getPacketRecords: () => OstraconPacketRecord[];
   getSelectedPacket: () => OstraconPacketRecord | null;
-  getClientCount: () => number;
-  isServerRunning: () => boolean;
-  openSettings: () => void;
   listMnNotebooks: () => Promise<OstraconNotebookSummary[]>;
   listMnCards: (notebookId: string) => Promise<OstraconCardSummary[]>;
   fetchCards: (cardIds: string[], format: string) => Promise<string>;
-}
-
-function createToken(): string {
-  return crypto.randomBytes(16).toString("hex");
+  logLine: (level: string, message: string) => void;
+  getConnectionUrl: () => string;
 }
 
 function createSessionId(): string {
@@ -179,7 +196,7 @@ function createId(prefix: string): string {
 }
 
 function createDefaultSettings(): OstraconSettings {
-  return { host: "127.0.0.1", port: DEFAULT_PORT, token: createToken(), outputFolder: DEFAULT_OUTPUT_FOLDER, autoStartServer: true };
+  return { host: DEFAULTS.host, port: DEFAULT_PORT, outputFolder: DEFAULT_OUTPUT_FOLDER, autoStartServer: true, includeBacklinks: true, approvedDevices: [] };
 }
 
 function normalizePacket(packet: OstraconPacket): OstraconPacket {
@@ -192,8 +209,8 @@ function normalizePacket(packet: OstraconPacket): OstraconPacket {
   return {
     version: PROTOCOL_VERSION,
     id: packet.id,
-    status: packet.status || "draft",
-    transport: packet.transport || "ws",
+    status: packet.status || DEFAULTS.status,
+    transport: packet.transport || DEFAULTS.transport,
     createdAt: packet.createdAt || nowIso(),
     updatedAt: nowIso(),
     source: { platform: packet.source.platform || "MarginNote", title: packet.source.title || "", url: packet.source.url || "" },
@@ -229,85 +246,9 @@ function summarizePacket(packet: OstraconPacket) {
 
 function buildPacketFilePath(settings: OstraconSettings, packet: OstraconPacket): string {
   const outputFolder = sanitizePath(settings.outputFolder || DEFAULT_OUTPUT_FOLDER);
-  const platform = sanitizeSegment(packet.source?.platform || "MarginNote");
   const sourceTitle = sanitizeSegment(packet.source?.title || packet.id, packet.id);
-  const ext = packet.format === "canvas" ? ".canvas" : ".md";
-  return normalizePath(`${outputFolder}/${platform}/${sourceTitle}/${packet.id}${ext}`);
-}
-
-function buildPacketMarkdown(packet: OstraconPacket, record: OstraconPacketRecord): string {
-  if (packet.format === "canvas" && packet.notes) {
-    return packet.notes.trimEnd();
-  }
-
-  if (packet.format === "markdown" && packet.notes) {
-    const tags = normalizeTags(packet.tags);
-    const lines: string[] = ["---"];
-    lines.push(`ostracon_id: ${JSON.stringify(packet.id)}`);
-    lines.push(`ostracon_format: markdown`);
-    lines.push(`ostracon_received_at: ${JSON.stringify(record.receivedAt)}`);
-    lines.push(`ostracon_source_title: ${JSON.stringify(packet.source?.title || "")}`);
-    if (tags.length > 0) {
-      lines.push("ostracon_tags:");
-      for (const tag of tags) lines.push(`  - ${JSON.stringify(tag)}`);
-    }
-    lines.push("ostracon_note_ids:");
-    for (const obj of packet.objects || []) {
-      lines.push(`  - ${JSON.stringify(obj.id)}`);
-    }
-    lines.push("---", "");
-    lines.push(packet.notes.trimEnd());
-    appendObjectLinks(lines, packet);
-    return lines.join("\n");
-  }
-
-  const lines: string[] = [];
-  const tags = normalizeTags(packet.tags);
-  lines.push("---");
-  lines.push(`ostracon_id: ${JSON.stringify(packet.id)}`);
-  lines.push(`ostracon_status: ${JSON.stringify(packet.status || "draft")}`);
-  lines.push(`ostracon_version: ${packet.version || PROTOCOL_VERSION}`);
-  lines.push(`ostracon_transport: ${JSON.stringify(packet.transport || "ws")}`);
-  lines.push(`ostracon_source_platform: ${JSON.stringify(packet.source?.platform || "")}`);
-  lines.push(`ostracon_source_title: ${JSON.stringify(packet.source?.title || "")}`);
-  lines.push(`ostracon_source_url: ${JSON.stringify(packet.source?.url || "")}`);
-  lines.push(`ostracon_received_at: ${JSON.stringify(record.receivedAt)}`);
-  lines.push(`ostracon_file_path: ${JSON.stringify(record.filePath)}`);
-  lines.push(`ostracon_object_count: ${Array.isArray(packet.objects) ? packet.objects.length : 0}`);
-  lines.push("ostracon_tags:");
-  for (const tag of tags) lines.push(`  - ${JSON.stringify(tag)}`);
-  lines.push("ostracon_note_ids:");
-  for (const obj of packet.objects || []) {
-    lines.push(`  - ${JSON.stringify(obj.id)}`);
-  }
-  lines.push("---", "");
-  lines.push(`# ${packet.source?.title || packet.id}`, "");
-  lines.push("## Summary", "");
-  lines.push(packet.summary ? packet.summary : "未填写摘要", "");
-  lines.push("", "## Objects");
-  for (const object of packet.objects || []) {
-    lines.push(`### ${object.kind || "Card"} <!-- ostracon_noteid:${object.id} -->`);
-    lines.push(`- Title: ${object.title || ""}`, `- Excerpt: ${object.excerpt || ""}`, `- Comment: ${object.comment || ""}`);
-    lines.push(`- Source Anchor: ${object.sourceAnchor || ""}`);
-    if (object.sourceAnchor) lines.push(`- MarginNote Link: [Open in MarginNote](${object.sourceAnchor})`);
-    lines.push(`- Has Image: ${object.hasImage ? "yes" : "no"}`, `- Has Handwriting: ${object.hasHandwriting ? "yes" : "no"}`, "");
-  }
-  lines.push("## Raw Packet", "```json", JSON.stringify(packet, null, 2), "```", "");
-  return lines.join("\n");
-}
-
-function appendObjectLinks(lines: string[], packet: OstraconPacket): void {
-  const linkedObjects = (packet.objects || []).filter(object => object.sourceAnchor);
-  if (linkedObjects.length === 0) return;
-  lines.push("", "## MarginNote Links", "");
-  for (const object of linkedObjects) {
-    const label = object.title || object.excerpt || object.id || "MarginNote Card";
-    lines.push(`- [${escapeMarkdownLinkText(label)}](${object.sourceAnchor})`);
-  }
-}
-
-function escapeMarkdownLinkText(value: string): string {
-  return String(value || "").replace(/[[\]\\]/g, "\\$&").replace(/\s+/g, " ").trim() || "MarginNote Card";
+  const ext = fileExtensionForFormat(packet.format);
+  return normalizePath(`${outputFolder}/${sourceTitle}/${packet.id}${ext}`);
 }
 
 function buildPacketRecord(packet: OstraconPacket, filePath: string, meta: OstraconRecordMeta = {}): OstraconPacketRecord {
@@ -315,26 +256,31 @@ function buildPacketRecord(packet: OstraconPacket, filePath: string, meta: Ostra
   return {
     id: normalized.id, packet: normalized, summary: summarizePacket(normalized), filePath,
     source: normalized.source, tags: normalized.tags as string[],
-    receivedAt: meta.receivedAt || nowIso(), transport: meta.transport || "ws",
-    requestId: meta.requestId || "", clientId: meta.clientId || "", messageType: meta.messageType || "command",
+    receivedAt: meta.receivedAt || nowIso(), transport: meta.transport || DEFAULTS.transport,
+    requestId: meta.requestId || "", clientId: meta.clientId || "",     messageType: meta.messageType || DEFAULTS.messageType,
     version: meta.version ?? 1,
     autoSynced: meta.autoSynced ?? false,
   };
 }
 
-function buildConnectionUrl(settings: OstraconSettings, sessionId: string): string {
-  const host = settings.host || "127.0.0.1";
+function buildConnectionUrl(settings: Pick<OstraconSettings, "host" | "port">, sessionId: string): string {
+  let host = settings.host || DEFAULTS.host;
   const port = Number(settings.port || DEFAULT_PORT);
-  const token = encodeURIComponent(settings.token || "");
-  return `ws://${host}:${port}?token=${token}&session=${encodeURIComponent(sessionId || "")}`;
+  // "::" is a bind address (all interfaces), not a connect address. Use IPv6 loopback instead.
+  if (host === "::") host = "::1";
+  // Strip existing brackets to avoid double-bracketing
+  const clean = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  const hostPart = clean.includes(":") ? `[${clean}]` : clean;
+  return `ws://${hostPart}:${port}?session=${encodeURIComponent(sessionId || "")}`;
 }
 
-function buildHelloPayload(settings: OstraconSettings, sessionId: string, vaultName?: string) {
+function buildHelloPayload(settings: Pick<OstraconSettings, "outputFolder" | "includeBacklinks">, sessionId: string, vaultName?: string) {
   return {
     protocolVersion: PROTOCOL_VERSION, pluginId: PLUGIN_ID, sessionId,
     serverTime: nowIso(), capabilities: ["hello", "ping", "pong", "event", "command", "sync_request", "sync_result", "ack", "error"],
     outputFolder: settings.outputFolder || DEFAULT_OUTPUT_FOLDER,
     vaultName: vaultName || "",
+    includeBacklinks: settings.includeBacklinks,
   };
 }
 
@@ -342,41 +288,25 @@ function buildAckPayload(message: OstraconMessage) {
   return { requestId: message.requestId || "", ok: true, type: message.type || "unknown", command: message.command || "" };
 }
 
-async function ensureFolder(app: App, folderPath: string): Promise<void> {
-  const segments = folderPath.split("/").filter(Boolean);
-  let current = "";
-  for (const segment of segments) {
-    current = current ? `${current}/${segment}` : segment;
-    if (!app.vault.getAbstractFileByPath(current)) {
-      await app.vault.createFolder(current);
-    }
-  }
+type PacketFormat = "markdown" | "canvas";
+
+function toPacketFormat(f?: string): PacketFormat {
+  return f === "canvas" ? "canvas" : "markdown";
 }
 
-let debugLogPath = "";
-
-function setDebugLogPath(p: string) {
-  debugLogPath = p;
-}
-
-function debugLog(msg: string) {
-  if (!debugLogPath) return;
-  try {
-    const fs = require("fs") as typeof import("fs");
-    fs.appendFileSync(debugLogPath, `[${new Date().toISOString()}] ${msg}\n`, "utf8");
-  } catch {}
+function fileExtensionForFormat(f?: string): ".md" | ".canvas" {
+  return f === "canvas" ? ".canvas" : ".md";
 }
 
 export {
-  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT,
-  createToken, createSessionId, nowIso, sanitizeSegment, normalizeTags, createId,
-  createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath,
-  buildPacketMarkdown, buildPacketRecord, buildConnectionUrl, buildHelloPayload, buildAckPayload,
-  ensureFolder,
-  setDebugLogPath, debugLog,
+  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT,
+  createSessionId, nowIso, sanitizeSegment, normalizeTags, createId,
+  createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath, toPacketFormat, fileExtensionForFormat,
+  buildPacketRecord, buildConnectionUrl, buildHelloPayload, buildAckPayload,
 };
+
 export type {
   OstraconSettings, OstraconSource, OstraconObject, OstraconPacket, OstraconPacketRecord,
   OstraconRecordMeta, OstraconMessage, OstraconNotebookSummary, OstraconCardSummary,
-  LogEntry,
+  LogEntry, PacketFormat,
 };
