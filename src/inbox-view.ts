@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf, Modal, SuggestModal, App, TFile, Menu } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, Modal, SuggestModal, App, TFile, Menu, MarkdownRenderer, type Component } from "obsidian";
 import { VIEW_TYPE_INBOX, type ViewHost, type OstraconCardSummary, type OstraconNotebookSummary } from "./contract";
 import { ensureFolder } from "./vault-utils";
 
@@ -32,6 +32,7 @@ class OstraconInboxView extends ItemView {
   dragStartIndex = -1;
   dragSelectionOccurred = false;
 
+  retryTimer: ReturnType<typeof setInterval> | null = null;
   cardAreaEl: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ViewHost) {
@@ -56,6 +57,7 @@ class OstraconInboxView extends ItemView {
     document.removeEventListener("keyup", this.onKeyUp);
     document.removeEventListener("mouseup", this.onMouseUp);
     if (this.connCheckTimer) clearInterval(this.connCheckTimer);
+    this.clearRetryTimer();
     this.contentEl.empty();
   }
 
@@ -83,6 +85,7 @@ class OstraconInboxView extends ItemView {
     const connected = this.plugin.isServerRunning() && this.plugin.getClientCount() > 0;
     if (connected !== this.isConnected) {
       this.isConnected = connected;
+      if (!connected) this.clearRetryTimer();
       this.render();
       if (connected) this.fetchCards();
     }
@@ -113,6 +116,30 @@ class OstraconInboxView extends ItemView {
     }
     this.updateActionBarState();
     this.restoreSearchFocus();
+  }
+
+  startRetryTimer(): void {
+    this.clearRetryTimer();
+    this.retryTimer = setInterval(() => {
+      if (this.plugin.isServerRunning() && this.plugin.getClientCount() > 0) {
+        this.fetchCards();
+      } else {
+        this.clearRetryTimer();
+      }
+    }, 5000);
+  }
+
+  clearRetryTimer(): void {
+    if (this.retryTimer) {
+      clearInterval(this.retryTimer);
+      this.retryTimer = null;
+    }
+  }
+
+  doRetry(): void {
+    this.clearRetryTimer();
+    this.errorText = "";
+    this.fetchCards();
   }
 
   restoreSearchFocus(): void {
@@ -195,7 +222,15 @@ class OstraconInboxView extends ItemView {
     }
 
     if (this.errorText) {
-      area.createSpan({ cls: "ostracon-error", text: this.errorText });
+      const errEl = area.createDiv({ cls: "ostracon-error" });
+      errEl.createSpan({ text: this.errorText });
+      const retry = errEl.createEl("button", {
+        text: "重新连接",
+        cls: "ostracon-empty-btn",
+      });
+      retry.style.cssText = "margin-top:8px;display:inline-block";
+      retry.addEventListener("click", () => this.doRetry());
+      return;
     }
 
     const displayCards = this.getFilteredCards();
@@ -438,7 +473,7 @@ class OstraconInboxView extends ItemView {
       if ((e.target as HTMLElement).tagName === "INPUT") return;
       if (this.isShiftDown || this.isMetaDown) return;
       if (this.dragSelectionOccurred) return;
-      new CardDetailModal(this.app, card, () => this.doImport([card.id])).open();
+      new CardDetailModal(this.app, this, card, () => this.doImport([card.id]), (id) => this.plugin.previewCards([id])).open();
     });
 
     item.addEventListener("contextmenu", (e) => {
@@ -511,6 +546,7 @@ class OstraconInboxView extends ItemView {
   }
 
   async fetchCards(): Promise<void> {
+    this.clearRetryTimer();
     this.loading = true;
     this.errorText = "";
     this.notebookCards.clear();
@@ -547,6 +583,7 @@ class OstraconInboxView extends ItemView {
       this.errorText = e instanceof Error ? e.message : String(e);
       this.loading = false;
       this.render();
+      this.startRetryTimer();
     }
   }
 
@@ -562,7 +599,8 @@ class OstraconInboxView extends ItemView {
     this.loading = true;
     this.render();
     try {
-      const content = await this.plugin.fetchCards(cardIds, "markdown");
+      let content = await this.plugin.fetchCards(cardIds, "markdown");
+      content = await this.plugin.processBase64InContent(content, targetPath);
       const folder = targetPath.split("/").slice(0, -1).join("/");
       if (folder) await ensureFolder(this.app, folder);
 
@@ -625,18 +663,30 @@ class OstraconInboxView extends ItemView {
 }
 
 class CardDetailModal extends Modal {
+  renderComponent: Component;
   card: OstraconCardSummary;
   onImport: () => void;
+  previewFn: (cardId: string) => Promise<string>;
+  contentLoaded = false;
 
-  constructor(app: App, card: OstraconCardSummary, onImport: () => void) {
+  constructor(app: App, renderComponent: Component, card: OstraconCardSummary, onImport: () => void, previewFn: (cardId: string) => Promise<string>) {
     super(app);
+    this.renderComponent = renderComponent;
     this.card = card;
     this.onImport = onImport;
+    this.previewFn = previewFn;
   }
 
   onOpen(): void {
     const { contentEl } = this;
     contentEl.addClass("ostracon-detail-modal");
+
+    this.renderLocalContent();
+    this.loadFullContent();
+  }
+
+  renderLocalContent(): void {
+    const { contentEl } = this;
 
     contentEl.createEl("h2", { text: this.card.title || "(无标题)" });
 
@@ -664,11 +714,66 @@ class CardDetailModal extends Modal {
       link.target = "_blank";
     }
 
+    contentEl.createDiv({ cls: "ostracon-detail-loading", text: "正在加载完整内容…" });
+
     const btnRow = contentEl.createDiv({ cls: "ostracon-detail-actions" });
     const btn = btnRow.createEl("button", { cls: "ostracon-import-btn", text: "导入此卡片到笔记" });
     btn.addEventListener("click", () => {
       this.onImport();
       this.close();
+    });
+  }
+
+  async loadFullContent(): Promise<void> {
+    let markdown: string;
+    try {
+      markdown = await Promise.race([
+        this.previewFn(this.card.id),
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error("连接MN超时")), 10000),
+        ),
+      ]);
+    } catch (e) {
+      this.showLoadError(e instanceof Error ? e.message : "加载失败");
+      return;
+    }
+    if (!markdown) {
+      this.showLoadError("完整内容为空");
+      return;
+    }
+    this.contentLoaded = true;
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("ostracon-detail-modal");
+
+    contentEl.createEl("h2", { text: this.card.title || "(无标题)" });
+
+    const md = contentEl.createDiv({ cls: "ostracon-detail-markdown" });
+    await MarkdownRenderer.render(this.app, markdown, md, "", this.renderComponent);
+
+    const btnRow = contentEl.createDiv({ cls: "ostracon-detail-actions" });
+    const btn = btnRow.createEl("button", { cls: "ostracon-import-btn", text: "导入此卡片到笔记" });
+    btn.addEventListener("click", () => {
+      this.onImport();
+      this.close();
+    });
+  }
+
+  showLoadError(message: string): void {
+    const loadingEl = this.contentEl.querySelector(".ostracon-detail-loading");
+    if (!loadingEl) return;
+    loadingEl.replaceChildren();
+    loadingEl.createSpan({ text: `完整内容加载失败: ${message}。` });
+    const retry = loadingEl.createEl("a", {
+      text: "重试",
+      cls: "ostracon-detail-retry",
+      attr: { href: "#", style: "cursor:pointer;text-decoration:underline;color:var(--interactive-accent);margin-left:4px" },
+    });
+    retry.addEventListener("click", (e) => {
+      e.preventDefault();
+      loadingEl.replaceChildren();
+      loadingEl.createSpan({ text: "正在加载完整内容…" });
+      this.loadFullContent();
     });
   }
 

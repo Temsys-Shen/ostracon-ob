@@ -20,6 +20,7 @@ interface OstraconSettings {
   outputFolder: string;
   autoStartServer: boolean;
   includeBacklinks: boolean;
+  autoConvertBase64: boolean;
   approvedDevices: Array<{ clientId: string; name: string; approvedAt: string }>;
 }
 
@@ -81,6 +82,7 @@ interface OstraconRecordMeta {
   messageType?: string;
   version?: number;
   autoSynced?: boolean;
+  targetFilePath?: string;
 }
 
 interface OstraconMessage {
@@ -159,6 +161,8 @@ export interface ViewHost {
   listMnNotebooks: () => Promise<OstraconNotebookSummary[]>;
   listMnCards: (notebookId: string) => Promise<OstraconCardSummary[]>;
   fetchCards: (cardIds: string[], format: string) => Promise<string>;
+  previewCards: (cardIds: string[]) => Promise<string>;
+  processBase64InContent: (content: string, targetPath: string) => Promise<string>;
   logLine: (level: string, message: string) => void;
   getConnectionUrl: () => string;
 }
@@ -196,7 +200,7 @@ function createId(prefix: string): string {
 }
 
 function createDefaultSettings(): OstraconSettings {
-  return { host: DEFAULTS.host, port: DEFAULT_PORT, outputFolder: DEFAULT_OUTPUT_FOLDER, autoStartServer: true, includeBacklinks: true, approvedDevices: [] };
+  return { host: DEFAULTS.host, port: DEFAULT_PORT, outputFolder: DEFAULT_OUTPUT_FOLDER, autoStartServer: true, includeBacklinks: true, autoConvertBase64: true, approvedDevices: [] };
 }
 
 function normalizePacket(packet: OstraconPacket): OstraconPacket {
@@ -204,7 +208,7 @@ function normalizePacket(packet: OstraconPacket): OstraconPacket {
   if (packet.version !== PROTOCOL_VERSION) throw new Error(`Unsupported packet version: ${packet.version}`);
   if (!packet.id || typeof packet.id !== "string") throw new Error("Packet missing id");
   if (!packet.source || typeof packet.source !== "object") throw new Error("Packet missing source");
-  if (!Array.isArray(packet.objects) || packet.objects.length === 0) throw new Error("Packet must contain at least one object");
+  if (!Array.isArray(packet.objects)) throw new Error("Packet objects must be an array");
 
   return {
     version: PROTOCOL_VERSION,

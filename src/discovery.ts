@@ -1,7 +1,6 @@
 import { spawn, ChildProcess } from "child_process";
 import os from "os";
 import mDNS = require("multicast-dns");
-import { debugLog } from "./logger";
 
 const SERVICE_TYPE = "_ostracon._tcp";
 const SERVICE_DOMAIN = "local";
@@ -67,34 +66,23 @@ class OstraconDiscovery {
   private startNative(cmd: string, args: string[]): void {
     try {
       this.process = spawn(cmd, args, {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-
-      this.process.stdout?.on("data", (data: Buffer) => {
-        debugLog(`[Ostracon] ${cmd}: ${data.toString().trim()}`);
-      });
-
-      this.process.stderr?.on("data", (data: Buffer) => {
-        debugLog(`[Ostracon] ${cmd} stderr: ${data.toString().trim()}`);
+        stdio: ["ignore", "ignore", "ignore"],
       });
 
       this.process.on("error", (err: Error) => {
-        debugLog(`[Ostracon] ${cmd} spawn failed: ${err.message}, falling back to mDNS`);
+        void err;
         this.process = null;
         this.startMdns();
       });
 
       this.process.on("exit", (code: number | null) => {
         if (code !== 0 && code !== null) {
-          debugLog(`[Ostracon] ${cmd} exited with code ${code}, falling back to mDNS`);
           this.process = null;
           this.startMdns();
         }
       });
-
-      debugLog(`[Ostracon] Service registered via ${cmd}: ${this.instanceName}.${SERVICE_TYPE}:${this.port}`);
     } catch (error) {
-      debugLog(`[Ostracon] ${cmd} failed: ${error instanceof Error ? error.message : String(error)}`);
+      void error;
       this.startMdns();
     }
   }
@@ -125,9 +113,8 @@ class OstraconDiscovery {
           });
         }
       });
-      debugLog(`[Ostracon] Service registered via multicast-dns: ${this.instanceName}.${SERVICE_TYPE}:${this.port}`);
     } catch (error) {
-      debugLog(`[Ostracon] multicast-dns failed: ${error instanceof Error ? error.message : String(error)}`);
+      void error;
       this.mdns = null;
     }
   }
@@ -149,7 +136,6 @@ class OstraconDiscovery {
       }
       this.mdns = null;
     }
-    debugLog("[Ostracon] Discovery service stopped");
   }
 }
 

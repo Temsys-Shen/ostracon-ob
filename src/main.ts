@@ -1,4 +1,3 @@
-import path from "path";
 import { Notice, Plugin, TFile, normalizePath } from "obsidian";
 import {
   VIEW_TYPE_INBOX, DEFAULT_OUTPUT_FOLDER, createDefaultSettings, normalizePacket,
@@ -9,7 +8,7 @@ import {
   type OstraconSettings, type OstraconPacket, type OstraconPacketRecord, type OstraconRecordMeta,
 } from "./contract";
 import { buildPacketMarkdown } from "./markdown-builder";
-import { setDebugLogPath, debugLog } from "./logger";
+import { processBase64InMarkdown } from "./image-service";
 import { FileService } from "./file-service";
 import { NoteIndex } from "./note-index";
 import { Mutex } from "./mutex";
@@ -39,11 +38,6 @@ class OstraconPlugin extends Plugin {
   mutex: Mutex = new Mutex();
 
   async onload(): Promise<void> {
-    const vaultPath = (this.app.vault.adapter as { basePath?: string }).basePath;
-    if (vaultPath) {
-      setDebugLogPath(path.join(vaultPath, "ostracon-debug.log"));
-      debugLog("Ostracon 插件加载");
-    }
     const saved = await this.loadData() as { settings?: Partial<OstraconSettings>; packets?: OstraconPacketRecord[]; selectedPacketId?: string; logs?: OstraconPluginState["logs"] } | null;
     this.settings = Object.assign(createDefaultSettings(), saved?.settings ?? {});
 
@@ -55,7 +49,7 @@ class OstraconPlugin extends Plugin {
 
     this.rebuildNoteIdMap();
 
-    this.fileService = new FileService(this.app, this.mutex, this.settings.includeBacklinks);
+    this.fileService = new FileService(this.app, this.mutex, this.settings.includeBacklinks, this.settings.autoConvertBase64);
     this.bridge = new OstraconWsBridge(this);
     this.discovery = new OstraconDiscovery(this.settings.port, this.getVaultName());
 
@@ -81,6 +75,7 @@ class OstraconPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     this.settings.outputFolder = normalizePath(this.settings.outputFolder || DEFAULT_OUTPUT_FOLDER);
     this.fileService.setIncludeBacklinks(this.settings.includeBacklinks);
+    this.fileService.setAutoConvertBase64(this.settings.autoConvertBase64);
     await this.persistState();
     this.updateStatusBar();
   }
@@ -236,6 +231,28 @@ class OstraconPlugin extends Plugin {
     return buildPacketMarkdown(normalized, record, this.settings.includeBacklinks);
   }
 
+  async previewCards(cardIds: string[]): Promise<string> {
+    if (!this.isServerRunning()) {
+      await this.startServer();
+    }
+    const raw = await this.bridge.requestClientCommand("fetchCards", { cardIds, format: "markdown" }, 30000);
+    if (!raw || typeof raw !== "object" || !(raw as { packet?: unknown }).packet) {
+      throw new Error("MN没有返回可预览的数据");
+    }
+    const packet = (raw as { packet: OstraconPacket }).packet;
+    return packet.notes || "";
+  }
+
+  async processBase64InContent(content: string, targetPath: string): Promise<string> {
+    if (!this.settings.autoConvertBase64 || !content) return content;
+    try {
+      return await processBase64InMarkdown(this.app, targetPath, content);
+    } catch (e) {
+      this.logLine("error", `Base64转换失败: ${e instanceof Error ? e.message : String(e)}`);
+      return content;
+    }
+  }
+
   rebuildNoteIdMap(): void {
     this.noteIndex.rebuild(this.state.packets.map(r => ({
       filePath: r.filePath,
@@ -271,7 +288,10 @@ class OstraconPlugin extends Plugin {
         throw new Error(`文件未包含noteId: ${payload.noteId}`);
       }
       if (!payload.markdownSection) throw new Error(`缺少MN渲染Markdown内容: ${payload.noteId}`);
-      const newSection = payload.markdownSection.trimEnd();
+      let newSection = payload.markdownSection.trimEnd();
+      if (this.settings.autoConvertBase64) {
+        newSection = await this.processBase64InContent(newSection, filePath);
+      }
 
       if (section) {
         content = replaceCardSection(content, section, newSection);
@@ -301,14 +321,20 @@ class OstraconPlugin extends Plugin {
   async ingestPacket(packet: OstraconPacket, meta?: OstraconRecordMeta): Promise<OstraconPacketRecord> {
     const normalized = normalizePacket(packet);
 
-    let filePath = "";
+    let filePath = meta?.targetFilePath ? normalizePath(meta.targetFilePath) : "";
     const packetFormat = toPacketFormat(normalized.format);
-    for (const obj of normalized.objects) {
-      const existing = this.noteIndex.get(obj.id, packetFormat);
-      if (existing) { filePath = existing; break; }
+    if (!filePath) {
+      for (const obj of normalized.objects) {
+        const existing = this.noteIndex.get(obj.id, packetFormat);
+        if (existing) { filePath = existing; break; }
+      }
     }
     if (!filePath) {
       filePath = buildPacketFilePath(this.settings, normalized);
+    }
+
+    if (this.settings.autoConvertBase64 && normalized.notes) {
+      normalized.notes = await this.processBase64InContent(normalized.notes, filePath);
     }
 
     const existingRecords = this.state.packets.filter(r => r.filePath === filePath);

@@ -76,6 +76,17 @@ class OstraconSettingTab extends PluginSettingTab {
         });
       });
 
+    new Setting(containerEl)
+      .setName("Base64 自动转图片")
+      .setDesc("导入时自动将 base64 编码的图片转为本地文件")
+      .addToggle((toggle) => {
+        toggle.setValue(Boolean(this.plugin.settings.autoConvertBase64));
+        toggle.onChange(async (value) => {
+          this.plugin.settings.autoConvertBase64 = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
     const approvedDevices = this.plugin.settings.approvedDevices || [];
     if (approvedDevices.length > 0) {
       containerEl.createEl("h4", { text: "已批准设备" });

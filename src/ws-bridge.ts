@@ -15,7 +15,6 @@ import {
   type OstraconPacketRecord,
   type BridgeHost,
 } from "./contract";
-import { debugLog } from "./logger";
 
 type ClientState = {
   ws: WebSocket;
@@ -197,7 +196,7 @@ class OstraconWsBridge {
         clientName = url.searchParams.get("name") || "";
         clientId = url.searchParams.get("clientId") || null;
       } catch (err) {
-        debugLog(`[Ostracon] Failed to parse connection URL: ${err instanceof Error ? err.message : String(err)}`);
+        void err;
         ws.close(4000, "Invalid connection URL");
         return;
       }
@@ -301,10 +300,6 @@ class OstraconWsBridge {
     ws.on("close", () => {
       this.clients.delete(ws);
       this.clientState.delete(ws);
-      if (this.pendingClientRequests.size > 0) {
-        const pendingCmds = Array.from(this.pendingClientRequests.keys()).join(", ");
-        debugLog(`❌ MN 断连，Pending 请求尚未收到响应: ${pendingCmds}`);
-      }
     });
   }
 
@@ -438,6 +433,7 @@ class OstraconWsBridge {
       case "submitPacket": {
         const pkt = message.payload as Record<string, unknown>;
         const autoSynced = Boolean(pkt?.autoSynced);
+        const targetFilePath = typeof pkt?.targetFilePath === "string" ? pkt.targetFilePath : "";
         const packetData = pkt?.packet || pkt;
         const packet = normalizePacket(packetData as OstraconPacket);
         const record = await this.plugin.ingestPacket(packet, {
@@ -446,6 +442,7 @@ class OstraconWsBridge {
           clientId: message.clientId || "",
           messageType: "command",
           autoSynced,
+          targetFilePath,
         });
         enqueue({
           type: "sync_result",
@@ -503,8 +500,6 @@ class OstraconWsBridge {
     const state = this.clientState.get(ws);
     const requestId = createId(command);
 
-    debugLog(`▶ send: ${command} requestId=${requestId} payload=${JSON.stringify(payload)}`);
-
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingClientRequests.delete(requestId);
@@ -547,7 +542,6 @@ class OstraconWsBridge {
     if (!message.requestId) {
       return;
     }
-    debugLog(`✔ recv: ${message.requestId}`);
     const pending = this.pendingClientRequests.get(message.requestId);
     if (!pending) {
       return;

@@ -16,10 +16,6 @@ function buildPacketMarkdown(packet: OstraconPacket, record: OstraconPacketRecor
       lines.push("ostracon_tags:");
       for (const tag of tags) lines.push(`  - ${JSON.stringify(tag)}`);
     }
-    lines.push("ostracon_note_ids:");
-    for (const obj of packet.objects || []) {
-      lines.push(`  - ${JSON.stringify(obj.id)}`);
-    }
     lines.push("---", "");
     lines.push(packet.notes.trimEnd());
     if (includeBacklinks) appendObjectLinks(lines, packet);
@@ -41,10 +37,6 @@ function buildPacketMarkdown(packet: OstraconPacket, record: OstraconPacketRecor
   lines.push(`ostracon_object_count: ${Array.isArray(packet.objects) ? packet.objects.length : 0}`);
   lines.push("ostracon_tags:");
   for (const tag of tags) lines.push(`  - ${JSON.stringify(tag)}`);
-  lines.push("ostracon_note_ids:");
-  for (const obj of packet.objects || []) {
-    lines.push(`  - ${JSON.stringify(obj.id)}`);
-  }
   lines.push("---", "");
   lines.push(`# ${packet.source?.title || packet.id}`, "");
   lines.push("## Summary", "");

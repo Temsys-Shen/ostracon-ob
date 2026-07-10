@@ -2,6 +2,7 @@ import { TFile, type App } from "obsidian";
 import { type OstraconPacketRecord } from "./contract";
 import { buildPacketMarkdown } from "./markdown-builder";
 import { ensureFolder } from "./vault-utils";
+import { processBase64InMarkdown } from "./image-service";
 import { findCardSection, buildCardSection, updateCanvasNode } from "./card-content";
 import { Mutex } from "./mutex";
 
@@ -9,16 +10,22 @@ class FileService {
   private app: App;
   private mutex: Mutex;
   private includeBacklinks: boolean;
+  private autoConvertBase64: boolean;
   internalWritePaths: Set<string> = new Set();
 
-  constructor(app: App, mutex: Mutex, includeBacklinks = true) {
+  constructor(app: App, mutex: Mutex, includeBacklinks = true, autoConvertBase64 = true) {
     this.app = app;
     this.mutex = mutex;
     this.includeBacklinks = includeBacklinks;
+    this.autoConvertBase64 = autoConvertBase64;
   }
 
   setIncludeBacklinks(value: boolean) {
     this.includeBacklinks = value;
+  }
+
+  setAutoConvertBase64(value: boolean) {
+    this.autoConvertBase64 = value;
   }
 
   formatFromFilePath(filePath: string): string {
@@ -52,7 +59,10 @@ class FileService {
     const unlock = await this.mutex.acquire(record.filePath);
     try {
       if (packet.format === "canvas") {
-        const content = buildPacketMarkdown(packet, record, this.includeBacklinks);
+        let content = buildPacketMarkdown(packet, record, this.includeBacklinks);
+        if (this.autoConvertBase64) {
+          content = await processBase64InMarkdown(this.app, record.filePath, content);
+        }
         if (existing instanceof TFile) {
           await this.processInternalWrite(existing, () => content);
         } else {
@@ -74,7 +84,10 @@ class FileService {
         content = content.replace(/^ostracon_version:.*$/m, `ostracon_version: ${record.version}`);
         await this.processInternalWrite(existing, () => content);
       } else {
-        const content = buildPacketMarkdown(packet, record, this.includeBacklinks);
+        let content = buildPacketMarkdown(packet, record, this.includeBacklinks);
+        if (this.autoConvertBase64) {
+          content = await processBase64InMarkdown(this.app, record.filePath, content);
+        }
         if (existing instanceof TFile) {
           await this.processInternalWrite(existing, () => content);
         } else {
