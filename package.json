@@ -1,11 +1,12 @@
 {
   "name": "ostracon-ob",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "main": "main.js",
   "private": true,
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "node esbuild.config.mjs production",
+    "build": "node esbuild.config.mjs production && node scripts/package-plugin.mjs",
+    "package": "node scripts/package-plugin.mjs",
     "lint": "eslint .",
     "test": "vitest run"
   },
