@@ -4,7 +4,7 @@ import {
   DEFAULTS, buildAckPayload,
   buildHelloPayload,
   buildConnectionUrl,
-  createSessionId,
+  PROTOCOL_VERSION,
   createId,
   normalizePacket,
   nowIso,
@@ -12,7 +12,6 @@ import {
   type OstraconMessage,
   type OstraconNotebookSummary,
   type OstraconPacket,
-  type OstraconPacketRecord,
   type BridgeHost,
 } from "./contract";
 
@@ -39,7 +38,6 @@ class OstraconWsBridge {
   httpServer: http.Server | null;
   wss: WebSocketServer | null;
   clients: Set<WebSocket>;
-  sessionId: string;
   heartbeatTimer: ReturnType<typeof setInterval> | null;
   processedRequests: Map<string, CachedFrames>;
   clientState: Map<WebSocket, ClientState>;
@@ -51,7 +49,6 @@ class OstraconWsBridge {
     this.httpServer = null;
     this.wss = null;
     this.clients = new Set();
-    this.sessionId = "";
     this.heartbeatTimer = null;
     this.processedRequests = new Map();
     this.clientState = new Map();
@@ -64,15 +61,13 @@ class OstraconWsBridge {
   }
 
   getConnectionUrl(): string {
-    return buildConnectionUrl(this.plugin.settings, this.sessionId);
+    return buildConnectionUrl(this.plugin.settings);
   }
 
   async start(): Promise<void> {
     if (this.isRunning) {
       return;
     }
-
-    this.sessionId = this.sessionId || createSessionId();
 
     await new Promise<void>((resolve, reject) => {
       const server = http.createServer((req, res) => {
@@ -85,7 +80,7 @@ class OstraconWsBridge {
           res.end(JSON.stringify({
             name: "Ostracon",
             port: port,
-            version: "1",
+            version: String(PROTOCOL_VERSION),
           }));
           return;
         }
@@ -261,7 +256,7 @@ class OstraconWsBridge {
     this.send(ws, {
       type: "hello",
       requestId: `hello-${client.clientId}`,
-      payload: buildHelloPayload(this.plugin.settings, this.sessionId, this.plugin.getVaultName()),
+      payload: buildHelloPayload(this.plugin.settings, this.plugin.getVaultName()),
     });
 
     ws.on("message", async (raw) => {
@@ -333,10 +328,27 @@ class OstraconWsBridge {
 
     switch (message.type) {
       case "hello": {
+        const payload = message.payload && typeof message.payload === "object"
+          ? message.payload as { protocolVersion?: number; pluginId?: string }
+          : {};
+        if (payload.protocolVersion !== PROTOCOL_VERSION || payload.pluginId !== "ostracon-mn") {
+          const errorMessage = "插件版本不一致，请同时更新MarginNote端和Obsidian端";
+          enqueue({
+            type: "error",
+            requestId: message.requestId || "",
+            payload: {
+              message: errorMessage,
+              expectedProtocolVersion: PROTOCOL_VERSION,
+              expectedPluginId: "ostracon-mn",
+            },
+          });
+          ws.close(4002, errorMessage);
+          return;
+        }
         enqueue({
           type: "hello",
           requestId: message.requestId || `hello-${client.clientId}`,
-          payload: buildHelloPayload(this.plugin.settings, this.sessionId),
+          payload: buildHelloPayload(this.plugin.settings),
         });
         enqueue({
           type: "ack",
@@ -351,7 +363,6 @@ class OstraconWsBridge {
           requestId: message.requestId || "",
           payload: {
             serverTime: nowIso(),
-            sessionId: this.sessionId,
           },
         });
         break;
@@ -367,7 +378,6 @@ class OstraconWsBridge {
           type: "sync_result",
           requestId: message.requestId || "",
           payload: {
-            sessionId: this.sessionId,
             packets,
           },
         });
@@ -471,6 +481,27 @@ class OstraconWsBridge {
         });
         break;
       }
+      case "getVaultBrowserState":
+        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: this.plugin.getVaultBrowserState() });
+        break;
+      case "listVaultFolder":
+        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: this.plugin.listVaultFolder((message.payload || {}) as Record<string, unknown>) });
+        break;
+      case "listVaultTags":
+        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: this.plugin.listVaultTags() });
+        break;
+      case "listVaultDocuments":
+        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: this.plugin.listVaultDocuments((message.payload || {}) as Record<string, unknown>) });
+        break;
+      case "searchVaultDocuments":
+        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: await this.plugin.searchVaultDocuments((message.payload || {}) as Record<string, unknown>) });
+        break;
+      case "getVaultDocument":
+        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: await this.plugin.getVaultDocument((message.payload || {}) as Record<string, unknown>) });
+        break;
+      case "getVaultAsset":
+        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: await this.plugin.getVaultAsset((message.payload || {}) as Record<string, unknown>) });
+        break;
       default:
         throw new Error(`Unsupported command: ${command}`);
     }
@@ -481,6 +512,12 @@ class OstraconWsBridge {
       return;
     }
     ws.send(JSON.stringify(message));
+  }
+
+  broadcastEvent(event: string, payload: unknown): void {
+    for (const client of this.getOpenClients()) {
+      this.send(client, { type: "event", event, payload });
+    }
   }
 
   getOpenClients(): WebSocket[] {

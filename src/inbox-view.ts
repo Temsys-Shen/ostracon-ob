@@ -559,8 +559,9 @@ class OstraconInboxView extends ItemView {
       if (!currentNb) { this.loading = false; this.render(); return; }
 
       const currentCards = await this.plugin.listMnCards(currentNb.id);
-      this.notebookCards.set(currentNb.id, currentCards);
-      this.cards = [...currentCards];
+      const currentDeduped = currentCards.filter((c, i, a) => a.findIndex(x => x.id === c.id) === i);
+      this.notebookCards.set(currentNb.id, currentDeduped);
+      this.cards = [...currentDeduped];
       this.loading = false;
       this.render();
 
@@ -571,12 +572,14 @@ class OstraconInboxView extends ItemView {
         for (const nb of remaining) {
           try {
             const nbCards = await this.plugin.listMnCards(nb.id);
-            this.notebookCards.set(nb.id, nbCards);
-            this.cards = [...this.cards, ...nbCards];
+            const nbDeduped = nbCards.filter((c, i, a) => a.findIndex(x => x.id === c.id) === i);
+            this.notebookCards.set(nb.id, nbDeduped);
+            this.cards = [...this.cards, ...nbDeduped];
             this.render();
           } catch (e) { console.warn("background notebook load failed", e); }
         }
         this.backgroundLoading = false;
+        this.cards = this.cards.filter((c, i, a) => a.findIndex(x => x.id === c.id) === i);
         this.render();
       }
     } catch (e) {

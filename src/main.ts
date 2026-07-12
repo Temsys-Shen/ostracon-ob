@@ -3,7 +3,7 @@ import {
   VIEW_TYPE_INBOX, DEFAULT_OUTPUT_FOLDER, createDefaultSettings, normalizePacket,
   buildPacketFilePath, buildPacketRecord, buildConnectionUrl,
   summarizePacket, createId,
-  toPacketFormat, fileExtensionForFormat,
+  toPacketFormat,
   type OstraconCardSummary, type OstraconNotebookSummary,
   type OstraconSettings, type OstraconPacket, type OstraconPacketRecord, type OstraconRecordMeta,
 } from "./contract";
@@ -18,6 +18,7 @@ import { OstraconInboxView } from "./inbox-view";
 import { OstraconSettingTab } from "./settings";
 import { OstraconDiscovery } from "./discovery";
 import { OstraconApprovalModal } from "./approval-modal";
+import { VaultBrowserService } from "./vault-browser-service";
 
 interface OstraconPluginState {
   packets: OstraconPacketRecord[];
@@ -36,6 +37,7 @@ class OstraconPlugin extends Plugin {
   fileService!: FileService;
   noteIndex: NoteIndex = new NoteIndex();
   mutex: Mutex = new Mutex();
+  vaultBrowser!: VaultBrowserService;
 
   async onload(): Promise<void> {
     const saved = await this.loadData() as { settings?: Partial<OstraconSettings>; packets?: OstraconPacketRecord[]; selectedPacketId?: string; logs?: OstraconPluginState["logs"] } | null;
@@ -51,7 +53,17 @@ class OstraconPlugin extends Plugin {
 
     this.fileService = new FileService(this.app, this.mutex, this.settings.includeBacklinks, this.settings.autoConvertBase64);
     this.bridge = new OstraconWsBridge(this);
+    this.vaultBrowser = new VaultBrowserService(this.app, (revision) => {
+      if (this.bridge) this.bridge.broadcastEvent("vaultIndexChanged", { revision });
+    });
     this.discovery = new OstraconDiscovery(this.settings.port, this.getVaultName());
+
+    this.registerEvent(this.app.vault.on("create", () => this.vaultBrowser.invalidate()));
+    this.registerEvent(this.app.vault.on("modify", () => this.vaultBrowser.invalidate()));
+    this.registerEvent(this.app.vault.on("delete", () => this.vaultBrowser.invalidate()));
+    this.registerEvent(this.app.vault.on("rename", () => this.vaultBrowser.invalidate()));
+    this.registerEvent(this.app.metadataCache.on("changed", () => this.vaultBrowser.invalidate()));
+    this.registerEvent(this.app.metadataCache.on("deleted", () => this.vaultBrowser.invalidate()));
 
     this.registerView(VIEW_TYPE_INBOX, (leaf) => new OstraconInboxView(leaf, this));
     this.addRibbonIcon("inbox", "获取MN数据", () => this.activateInboxView());
@@ -125,7 +137,7 @@ class OstraconPlugin extends Plugin {
   }
 
   getConnectionUrl(): string {
-    return buildConnectionUrl(this.settings, this.bridge ? this.bridge.sessionId : "");
+    return buildConnectionUrl(this.settings);
   }
 
   isServerRunning(): boolean {
@@ -139,6 +151,14 @@ class OstraconPlugin extends Plugin {
   getVaultName(): string {
     return this.app.vault.getName();
   }
+
+  getVaultBrowserState() { return this.vaultBrowser.getState(); }
+  listVaultFolder(payload: Record<string, unknown>) { return this.vaultBrowser.listFolder(String(payload.path || "")); }
+  listVaultTags() { return this.vaultBrowser.listTags(); }
+  listVaultDocuments(payload: Record<string, unknown>) { return this.vaultBrowser.listDocuments(payload as { tag?: string; cursor?: number; limit?: number }); }
+  searchVaultDocuments(payload: Record<string, unknown>) { return this.vaultBrowser.search(String(payload.query || ""), payload as { cursor?: number; limit?: number }); }
+  getVaultDocument(payload: Record<string, unknown>) { return this.vaultBrowser.getDocument(String(payload.path || "")); }
+  getVaultAsset(payload: Record<string, unknown>) { return this.vaultBrowser.getAsset(String(payload.path || "")); }
 
   getServerStatusText(): string {
     return this.bridge?.isRunning ? "Ostracon: 已启动" : "Ostracon: 已停止";

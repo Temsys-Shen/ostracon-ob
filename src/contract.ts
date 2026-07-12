@@ -3,7 +3,8 @@ import { normalizePath } from "obsidian";
 
 const PLUGIN_ID = "ostracon-ob";
 const VIEW_TYPE_INBOX = "ostracon-inbox-view";
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
+const PACKET_VERSION = 1;
 const DEFAULT_OUTPUT_FOLDER = "Marginnote";
 const DEFAULT_PORT = 27123;
 
@@ -150,6 +151,13 @@ export interface BridgeHost {
   isDeviceApproved: (clientId: string) => boolean;
   approveDevice: (clientId: string, name: string) => void;
   requestApproval: (clientId: string, name: string, callbacks: { onApprove: () => void; onDeny: () => void }) => void;
+  getVaultBrowserState: () => unknown;
+  listVaultFolder: (payload: Record<string, unknown>) => unknown;
+  listVaultTags: () => unknown;
+  listVaultDocuments: (payload: Record<string, unknown>) => unknown;
+  searchVaultDocuments: (payload: Record<string, unknown>) => Promise<unknown>;
+  getVaultDocument: (payload: Record<string, unknown>) => Promise<unknown>;
+  getVaultAsset: (payload: Record<string, unknown>) => Promise<unknown>;
 }
 
 export interface ViewHost {
@@ -165,10 +173,6 @@ export interface ViewHost {
   processBase64InContent: (content: string, targetPath: string) => Promise<string>;
   logLine: (level: string, message: string) => void;
   getConnectionUrl: () => string;
-}
-
-function createSessionId(): string {
-  return `session-${crypto.randomBytes(8).toString("hex")}`;
 }
 
 function nowIso(): string {
@@ -205,13 +209,13 @@ function createDefaultSettings(): OstraconSettings {
 
 function normalizePacket(packet: OstraconPacket): OstraconPacket {
   if (!packet || typeof packet !== "object") throw new Error("Packet must be an object");
-  if (packet.version !== PROTOCOL_VERSION) throw new Error(`Unsupported packet version: ${packet.version}`);
+  if (packet.version !== PACKET_VERSION) throw new Error(`Unsupported packet version: ${packet.version}`);
   if (!packet.id || typeof packet.id !== "string") throw new Error("Packet missing id");
   if (!packet.source || typeof packet.source !== "object") throw new Error("Packet missing source");
   if (!Array.isArray(packet.objects)) throw new Error("Packet objects must be an array");
 
   return {
-    version: PROTOCOL_VERSION,
+    version: PACKET_VERSION,
     id: packet.id,
     status: packet.status || DEFAULTS.status,
     transport: packet.transport || DEFAULTS.transport,
@@ -267,7 +271,7 @@ function buildPacketRecord(packet: OstraconPacket, filePath: string, meta: Ostra
   };
 }
 
-function buildConnectionUrl(settings: Pick<OstraconSettings, "host" | "port">, sessionId: string): string {
+function buildConnectionUrl(settings: Pick<OstraconSettings, "host" | "port">): string {
   let host = settings.host || DEFAULTS.host;
   const port = Number(settings.port || DEFAULT_PORT);
   // "::" is a bind address (all interfaces), not a connect address. Use IPv6 loopback instead.
@@ -275,12 +279,12 @@ function buildConnectionUrl(settings: Pick<OstraconSettings, "host" | "port">, s
   // Strip existing brackets to avoid double-bracketing
   const clean = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const hostPart = clean.includes(":") ? `[${clean}]` : clean;
-  return `ws://${hostPart}:${port}?session=${encodeURIComponent(sessionId || "")}`;
+  return `ws://${hostPart}:${port}`;
 }
 
-function buildHelloPayload(settings: Pick<OstraconSettings, "outputFolder" | "includeBacklinks">, sessionId: string, vaultName?: string) {
+function buildHelloPayload(settings: Pick<OstraconSettings, "outputFolder" | "includeBacklinks">, vaultName?: string) {
   return {
-    protocolVersion: PROTOCOL_VERSION, pluginId: PLUGIN_ID, sessionId,
+    protocolVersion: PROTOCOL_VERSION, pluginId: PLUGIN_ID,
     serverTime: nowIso(), capabilities: ["hello", "ping", "pong", "event", "command", "sync_request", "sync_result", "ack", "error"],
     outputFolder: settings.outputFolder || DEFAULT_OUTPUT_FOLDER,
     vaultName: vaultName || "",
@@ -303,8 +307,8 @@ function fileExtensionForFormat(f?: string): ".md" | ".canvas" {
 }
 
 export {
-  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT,
-  createSessionId, nowIso, sanitizeSegment, normalizeTags, createId,
+  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT,
+  nowIso, sanitizeSegment, normalizeTags, createId,
   createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath, toPacketFormat, fileExtensionForFormat,
   buildPacketRecord, buildConnectionUrl, buildHelloPayload, buildAckPayload,
 };
