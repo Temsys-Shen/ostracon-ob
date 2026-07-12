@@ -335,7 +335,7 @@ class OstraconInboxView extends ItemView {
     cb.addEventListener("click", (e) => e.stopPropagation());
 
     const isCollapsed = this.collapsedGroups.has(group.key);
-    const arrow = head.createSpan({
+    head.createSpan({
       cls: "ostracon-collapse-arrow",
       text: isCollapsed ? "▶" : "▼",
     });
@@ -382,6 +382,24 @@ class OstraconInboxView extends ItemView {
 
     const cb = item.createEl("input", { type: "checkbox" });
     cb.checked = isChecked;
+    cb.addEventListener("mousedown", (e) => {
+      if (this.isShiftDown) {
+        e.preventDefault();
+        this.handleShiftClick(card.id);
+        return;
+      }
+
+      if (this.isMetaDown) {
+        e.preventDefault();
+        this.handleMetaClick(card.id);
+        return;
+      }
+
+      this.isDragging = true;
+      this.dragSelectionOccurred = false;
+      this.dragStartIndex = this.getCardOrderIndex(card.id);
+      this.lastClickedIndex = this.dragStartIndex;
+    });
     cb.addEventListener("change", () => {
       if (cb.checked) this.selectedCardIds.add(card.id);
       else this.selectedCardIds.delete(card.id);
@@ -403,27 +421,6 @@ class OstraconInboxView extends ItemView {
         text: card.excerpt.length > 60 ? card.excerpt.slice(0, 60) + "…" : card.excerpt,
       });
     }
-
-    item.addEventListener("mousedown", (e) => {
-      if ((e.target as HTMLElement).tagName === "INPUT") return;
-
-      if (this.isShiftDown) {
-        e.preventDefault();
-        this.handleShiftClick(card.id);
-        return;
-      }
-
-      if (this.isMetaDown) {
-        e.preventDefault();
-        this.handleMetaClick(card.id);
-        return;
-      }
-
-      this.isDragging = true;
-      this.dragSelectionOccurred = false;
-      this.dragStartIndex = this.getCardOrderIndex(card.id);
-      this.lastClickedIndex = this.dragStartIndex;
-    });
 
     item.addEventListener("mouseenter", () => {
       if (!this.isDragging) return;
@@ -484,9 +481,11 @@ class OstraconInboxView extends ItemView {
       );
       menu.addItem((i) =>
         i.setTitle("选中/取消选中").onClick(() => {
-          this.selectedCardIds.has(card.id)
-            ? this.selectedCardIds.delete(card.id)
-            : this.selectedCardIds.add(card.id);
+          if (this.selectedCardIds.has(card.id)) {
+            this.selectedCardIds.delete(card.id);
+          } else {
+            this.selectedCardIds.add(card.id);
+          }
           this.lastClickedIndex = this.getCardOrderIndex(card.id);
           this.refresh();
         })

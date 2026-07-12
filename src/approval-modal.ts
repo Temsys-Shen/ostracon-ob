@@ -24,7 +24,7 @@ class OstraconApprovalModal extends Modal {
       text: `设备 "${this.clientName}" 正在请求连接到 Ostracon。`,
     });
     contentEl.createEl("p", {
-      text: "允许后，该设备将可以同步 MarginNote 数据到此仓库。",
+      text: "允许后，该设备可以发送MarginNote数据到此仓库。",
     });
 
     new Setting(contentEl)

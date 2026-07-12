@@ -367,22 +367,6 @@ class OstraconWsBridge {
         });
         break;
       }
-      case "sync_request": {
-        const packets = this.plugin.getPacketSummaries();
-        enqueue({
-          type: "ack",
-          requestId: message.requestId || "",
-          payload: buildAckPayload(message),
-        });
-        enqueue({
-          type: "sync_result",
-          requestId: message.requestId || "",
-          payload: {
-            packets,
-          },
-        });
-        break;
-      }
       case "event": {
         enqueue({
           type: "ack",
@@ -401,7 +385,7 @@ class OstraconWsBridge {
         this.plugin.logLine("info", `client:${message.type}`);
         break;
       }
-      case "sync_result": {
+      case "command_result": {
         this.resolvePendingClientRequest(message);
         break;
       }
@@ -441,21 +425,15 @@ class OstraconWsBridge {
 
     switch (command) {
       case "submitPacket": {
-        const pkt = message.payload as Record<string, unknown>;
-        const autoSynced = Boolean(pkt?.autoSynced);
-        const targetFilePath = typeof pkt?.targetFilePath === "string" ? pkt.targetFilePath : "";
-        const packetData = pkt?.packet || pkt;
-        const packet = normalizePacket(packetData as OstraconPacket);
+        const packet = normalizePacket(message.payload as OstraconPacket);
         const record = await this.plugin.ingestPacket(packet, {
           transport: "ws",
           requestId: message.requestId || "",
           clientId: message.clientId || "",
           messageType: "command",
-          autoSynced,
-          targetFilePath,
         });
         enqueue({
-          type: "sync_result",
+          type: "command_result",
           requestId: message.requestId || "",
           payload: {
             ok: true,
@@ -469,38 +447,36 @@ class OstraconWsBridge {
         });
         break;
       }
-      case "cardUpdated": {
-        await this.plugin.handleCardUpdated(message.payload as {
-          noteId: string; title: string; excerpt: string; comment: string;
-          sourceAnchor: string; version: number; filePath?: string; format?: string; markdownSection?: string; canvasText?: string; hasImage?: boolean; hasHandwriting?: boolean;
-        });
-        enqueue({
-          type: "sync_result",
-          requestId: message.requestId || "",
-          payload: { ok: true, command: "cardUpdated", noteId: (message.payload as Record<string, unknown>)?.noteId || "" },
-        });
-        break;
-      }
       case "getVaultBrowserState":
-        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: this.plugin.getVaultBrowserState() });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.getVaultBrowserState() });
         break;
       case "listVaultFolder":
-        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: this.plugin.listVaultFolder((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.listVaultFolder((message.payload || {}) as Record<string, unknown>) });
         break;
       case "listVaultTags":
-        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: this.plugin.listVaultTags() });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.listVaultTags() });
         break;
       case "listVaultDocuments":
-        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: this.plugin.listVaultDocuments((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.listVaultDocuments((message.payload || {}) as Record<string, unknown>) });
         break;
       case "searchVaultDocuments":
-        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: await this.plugin.searchVaultDocuments((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.searchVaultDocuments((message.payload || {}) as Record<string, unknown>) });
         break;
       case "getVaultDocument":
-        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: await this.plugin.getVaultDocument((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.getVaultDocument((message.payload || {}) as Record<string, unknown>) });
         break;
       case "getVaultAsset":
-        enqueue({ type: "sync_result", requestId: message.requestId || "", payload: await this.plugin.getVaultAsset((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.getVaultAsset((message.payload || {}) as Record<string, unknown>) });
+        break;
+      case "getQuoteContext":
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.getQuoteContext() });
+        break;
+      case "insertQuote":
+        enqueue({
+          type: "command_result",
+          requestId: message.requestId || "",
+          payload: await this.plugin.insertQuote((message.payload || {}) as import("./contract").QuoteInsertRequest),
+        });
         break;
       default:
         throw new Error(`Unsupported command: ${command}`);

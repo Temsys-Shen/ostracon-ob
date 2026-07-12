@@ -1,9 +1,11 @@
 .ostracon-view {
+  box-sizing: border-box;
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
   height: 100%;
+  min-height: 0;
   color: var(--text-normal);
 }
 
@@ -424,4 +426,49 @@
 }
 .ostracon-context-item:hover {
   background: var(--background-modifier-hover);
+}
+.ostracon-quote-template-setting .setting-item-control {
+  align-items: stretch;
+  flex-direction: column;
+  min-width: min(520px, 60vw);
+}
+
+.ostracon-quote-template-setting textarea {
+  width: 100%;
+  min-height: 116px;
+  resize: vertical;
+  font-family: var(--font-monospace);
+}
+
+.ostracon-template-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ostracon-template-tools button {
+  padding: 3px 8px;
+  font-size: var(--font-ui-smaller);
+}
+
+.ostracon-template-status {
+  margin-top: 8px;
+  color: var(--text-success);
+  font-size: var(--font-ui-smaller);
+}
+
+.ostracon-template-status.is-error {
+  color: var(--text-error);
+}
+
+.ostracon-template-preview {
+  max-height: 180px;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-secondary);
+  white-space: pre-wrap;
 }

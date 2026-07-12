@@ -1,9 +1,10 @@
 import crypto from "crypto";
 import { normalizePath } from "obsidian";
+import { DEFAULT_QUOTE_TEMPLATE } from "./quote-template";
 
 const PLUGIN_ID = "ostracon-ob";
 const VIEW_TYPE_INBOX = "ostracon-inbox-view";
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 4;
 const PACKET_VERSION = 1;
 const DEFAULT_OUTPUT_FOLDER = "Marginnote";
 const DEFAULT_PORT = 27123;
@@ -22,6 +23,8 @@ interface OstraconSettings {
   autoStartServer: boolean;
   includeBacklinks: boolean;
   autoConvertBase64: boolean;
+  quoteTemplate: string;
+  createQuoteCard: boolean;
   approvedDevices: Array<{ clientId: string; name: string; approvedAt: string }>;
 }
 
@@ -72,7 +75,6 @@ interface OstraconPacketRecord {
   clientId: string;
   messageType: string;
   version: number;
-  autoSynced: boolean;
 }
 
 interface OstraconRecordMeta {
@@ -82,8 +84,6 @@ interface OstraconRecordMeta {
   clientId?: string;
   messageType?: string;
   version?: number;
-  autoSynced?: boolean;
-  targetFilePath?: string;
 }
 
 interface OstraconMessage {
@@ -124,10 +124,21 @@ interface LogEntry {
   at: string;
 }
 
-export interface CardUpdatedPayload {
-  noteId: string; title: string; excerpt: string; comment: string;
-  sourceAnchor: string; version: number; filePath?: string; format?: string; markdownSection?: string; canvasText?: string; hasImage?: boolean; hasHandwriting?: boolean;
-}
+type QuoteSelection =
+  | { kind: "text"; text: string; image: null; noteId: string | null; link: string | null }
+  | { kind: "image"; text: null; image: { mime: "image/png"; base64: string }; noteId: string | null; link: string | null };
+
+type QuoteInsertRequest = {
+  target: "cursor" | "active-file" | "file";
+  filePath?: string;
+};
+
+type QuoteInsertResult = { ok: true; filePath: string };
+
+type QuoteTargetContext = {
+  cursor: { available: boolean; filePath: string | null };
+  activeFile: { available: boolean; filePath: string | null };
+};
 
 export interface SettingsHost {
   settings: OstraconSettings;
@@ -138,15 +149,8 @@ export interface SettingsHost {
 
 export interface BridgeHost {
   ingestPacket: (packet: OstraconPacket, meta?: OstraconRecordMeta) => Promise<OstraconPacketRecord>;
-  handleCardUpdated: (payload: CardUpdatedPayload) => Promise<void>;
   logLine: (level: string, message: string) => void;
   getVaultName: () => string;
-  getPacketSummaries: () => Array<{
-    id: string;
-    summary: unknown;
-    filePath: string;
-    receivedAt: string;
-  }>;
   settings: Pick<OstraconSettings, "port" | "host" | "outputFolder" | "includeBacklinks">;
   isDeviceApproved: (clientId: string) => boolean;
   approveDevice: (clientId: string, name: string) => void;
@@ -158,14 +162,14 @@ export interface BridgeHost {
   searchVaultDocuments: (payload: Record<string, unknown>) => Promise<unknown>;
   getVaultDocument: (payload: Record<string, unknown>) => Promise<unknown>;
   getVaultAsset: (payload: Record<string, unknown>) => Promise<unknown>;
+  getQuoteContext: () => QuoteTargetContext;
+  insertQuote: (payload: QuoteInsertRequest) => Promise<QuoteInsertResult | null>;
 }
 
 export interface ViewHost {
   openSettings: () => void;
   isServerRunning: () => boolean;
   getClientCount: () => number;
-  getPacketRecords: () => OstraconPacketRecord[];
-  getSelectedPacket: () => OstraconPacketRecord | null;
   listMnNotebooks: () => Promise<OstraconNotebookSummary[]>;
   listMnCards: (notebookId: string) => Promise<OstraconCardSummary[]>;
   fetchCards: (cardIds: string[], format: string) => Promise<string>;
@@ -204,7 +208,17 @@ function createId(prefix: string): string {
 }
 
 function createDefaultSettings(): OstraconSettings {
-  return { host: DEFAULTS.host, port: DEFAULT_PORT, outputFolder: DEFAULT_OUTPUT_FOLDER, autoStartServer: true, includeBacklinks: true, autoConvertBase64: true, approvedDevices: [] };
+  return {
+    host: DEFAULTS.host,
+    port: DEFAULT_PORT,
+    outputFolder: DEFAULT_OUTPUT_FOLDER,
+    autoStartServer: true,
+    includeBacklinks: true,
+    autoConvertBase64: true,
+    quoteTemplate: DEFAULT_QUOTE_TEMPLATE,
+    createQuoteCard: true,
+    approvedDevices: [],
+  };
 }
 
 function normalizePacket(packet: OstraconPacket): OstraconPacket {
@@ -267,7 +281,6 @@ function buildPacketRecord(packet: OstraconPacket, filePath: string, meta: Ostra
     receivedAt: meta.receivedAt || nowIso(), transport: meta.transport || DEFAULTS.transport,
     requestId: meta.requestId || "", clientId: meta.clientId || "",     messageType: meta.messageType || DEFAULTS.messageType,
     version: meta.version ?? 1,
-    autoSynced: meta.autoSynced ?? false,
   };
 }
 
@@ -285,7 +298,7 @@ function buildConnectionUrl(settings: Pick<OstraconSettings, "host" | "port">): 
 function buildHelloPayload(settings: Pick<OstraconSettings, "outputFolder" | "includeBacklinks">, vaultName?: string) {
   return {
     protocolVersion: PROTOCOL_VERSION, pluginId: PLUGIN_ID,
-    serverTime: nowIso(), capabilities: ["hello", "ping", "pong", "event", "command", "sync_request", "sync_result", "ack", "error"],
+    serverTime: nowIso(), capabilities: ["hello", "ping", "pong", "event", "command", "command_result", "ack", "error"],
     outputFolder: settings.outputFolder || DEFAULT_OUTPUT_FOLDER,
     vaultName: vaultName || "",
     includeBacklinks: settings.includeBacklinks,
@@ -296,25 +309,19 @@ function buildAckPayload(message: OstraconMessage) {
   return { requestId: message.requestId || "", ok: true, type: message.type || "unknown", command: message.command || "" };
 }
 
-type PacketFormat = "markdown" | "canvas";
-
-function toPacketFormat(f?: string): PacketFormat {
-  return f === "canvas" ? "canvas" : "markdown";
-}
-
 function fileExtensionForFormat(f?: string): ".md" | ".canvas" {
   return f === "canvas" ? ".canvas" : ".md";
 }
 
 export {
-  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT,
+  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT, DEFAULT_QUOTE_TEMPLATE,
   nowIso, sanitizeSegment, normalizeTags, createId,
-  createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath, toPacketFormat, fileExtensionForFormat,
+  createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath, fileExtensionForFormat,
   buildPacketRecord, buildConnectionUrl, buildHelloPayload, buildAckPayload,
 };
 
 export type {
   OstraconSettings, OstraconSource, OstraconObject, OstraconPacket, OstraconPacketRecord,
   OstraconRecordMeta, OstraconMessage, OstraconNotebookSummary, OstraconCardSummary,
-  LogEntry, PacketFormat,
+  LogEntry, QuoteSelection, QuoteInsertRequest, QuoteInsertResult, QuoteTargetContext,
 };

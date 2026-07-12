@@ -1,14 +1,15 @@
 # Ostracon OB
 
-Obsidian侧插件，负责在本地启动WebSocket服务、接收来自MarginNote的知识包，并将内容落到Vault中。
+Obsidian侧插件，负责接收MarginNote单次发送的知识包，也可主动浏览MN卡片并导入当前笔记。
 
 ## 功能
 
 - 监听`127.0.0.1`上的本地WebSocket连接
 - 首次连接由Obsidian确认设备，后续通过clientId识别
-- 接收`hello`、`ping`、`sync_request`、`event`、`command`类消息
-- 将知识包写入Vault下的可配置目录
-- 在插件内提供收件箱视图，查看已接收包和落盘路径
+- 接收`hello`、`ping`、`event`、`command`和`command_result`类消息
+- 将MN单次发送的Markdown或Canvas写入Vault下的可配置目录
+- 在右侧边栏浏览MN卡片并导入当前笔记
+- 不监听卡片变更，不自动更新已经写入的文件
 
 ## 安装
 
@@ -26,7 +27,7 @@ Obsidian侧插件，负责在本地启动WebSocket服务、接收来自MarginNot
 
 - 仅监听本机`127.0.0.1`
 - 首次连接必须由Obsidian用户确认
-- 插件会把接收到的知识包写入当前Vault
+- 插件只在用户发送或导入时写入当前Vault
 - 插件不会主动连接外部网络，所有通信都发生在本机
 
 ## 目录约定

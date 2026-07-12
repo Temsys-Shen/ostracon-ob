@@ -1,5 +1,6 @@
 import { App, Plugin, PluginSettingTab, Setting, Notice, normalizePath } from "obsidian";
 import { DEFAULTS, DEFAULT_OUTPUT_FOLDER, type SettingsHost } from "./contract";
+import { renderQuoteTemplate, validateQuoteTemplate } from "./quote-template";
 
 class OstraconSettingTab extends PluginSettingTab {
   plugin: SettingsHost;
@@ -86,6 +87,62 @@ class OstraconSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+
+    new Setting(containerEl)
+      .setName("创建引文卡片")
+      .addToggle((toggle) => {
+        toggle.setValue(Boolean(this.plugin.settings.createQuoteCard));
+        toggle.onChange(async (value) => {
+          this.plugin.settings.createQuoteCard = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    let templateInput!: HTMLTextAreaElement;
+    const templateSetting = new Setting(containerEl)
+      .setName("引用模板")
+      .addTextArea((text) => {
+        templateInput = text.inputEl;
+        text.inputEl.rows = 6;
+        text.setValue(this.plugin.settings.quoteTemplate);
+      });
+    templateSetting.settingEl.addClass("ostracon-quote-template-setting");
+
+    const tools = templateSetting.controlEl.createDiv({ cls: "ostracon-template-tools" });
+    const status = templateSetting.controlEl.createDiv({ cls: "ostracon-template-status" });
+    const preview = templateSetting.controlEl.createEl("pre", { cls: "ostracon-template-preview" });
+    const samples = [
+      ["内容", "{{content}}"], ["链接", "{{link}}"], ["有链接", "{{#link}}{{/link}}"],
+      ["清理", "|trim"], ["单行", "|singleline"], ["引用", "|blockquote"],
+    ];
+
+    const updateTemplate = async () => {
+      const value = templateInput.value;
+      try {
+        validateQuoteTemplate(value);
+        preview.setText(renderQuoteTemplate(value, { content: "第一行\n第二行", link: "marginnote4app://note/example" }));
+        status.setText("语法有效");
+        status.removeClass("is-error");
+        this.plugin.settings.quoteTemplate = value;
+        await this.plugin.saveSettings();
+      } catch (error) {
+        status.setText(error instanceof Error ? error.message : String(error));
+        status.addClass("is-error");
+      }
+    };
+    templateInput.addEventListener("input", () => { void updateTemplate(); });
+
+    for (const [label, token] of samples) {
+      const button = tools.createEl("button", { text: label, attr: { type: "button" } });
+      button.addEventListener("click", () => {
+        const start = templateInput.selectionStart;
+        const end = templateInput.selectionEnd;
+        templateInput.setRangeText(token, start, end, "end");
+        templateInput.focus();
+        void updateTemplate();
+      });
+    }
+    void updateTemplate();
 
     const approvedDevices = this.plugin.settings.approvedDevices || [];
     if (approvedDevices.length > 0) {

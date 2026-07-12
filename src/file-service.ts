@@ -3,7 +3,6 @@ import { type OstraconPacketRecord } from "./contract";
 import { buildPacketMarkdown } from "./markdown-builder";
 import { ensureFolder } from "./vault-utils";
 import { processBase64InMarkdown } from "./image-service";
-import { findCardSection, buildCardSection, updateCanvasNode } from "./card-content";
 import { Mutex } from "./mutex";
 
 class FileService {
@@ -26,10 +25,6 @@ class FileService {
 
   setAutoConvertBase64(value: boolean) {
     this.autoConvertBase64 = value;
-  }
-
-  formatFromFilePath(filePath: string): string {
-    return filePath.toLowerCase().endsWith(".canvas") ? "canvas" : "markdown";
   }
 
   async processInternalWrite(file: TFile, fn: (content: string) => string): Promise<void> {
@@ -58,52 +53,20 @@ class FileService {
 
     const unlock = await this.mutex.acquire(record.filePath);
     try {
-      if (packet.format === "canvas") {
-        let content = buildPacketMarkdown(packet, record, this.includeBacklinks);
-        if (this.autoConvertBase64) {
-          content = await processBase64InMarkdown(this.app, record.filePath, content);
-        }
-        if (existing instanceof TFile) {
-          await this.processInternalWrite(existing, () => content);
-        } else {
-          await this.createInternalFile(record.filePath, content);
-        }
-      } else if (existing instanceof TFile && packet.format !== "markdown") {
-        let content = await this.app.vault.read(existing);
-        for (const object of packet.objects || []) {
-          const section = findCardSection(content, object.id);
-          const newSection = buildCardSection(object, section?.headingMark);
-          if (section) {
-            content = content.slice(0, section.start) + newSection + content.slice(section.end);
-          } else {
-            const rawIdx = content.lastIndexOf("## Raw Packet");
-            const at = rawIdx >= 0 ? rawIdx : content.length;
-            content = content.slice(0, at) + "\n" + newSection.trimEnd() + "\n\n" + content.slice(at);
-          }
-        }
-        content = content.replace(/^ostracon_version:.*$/m, `ostracon_version: ${record.version}`);
+      let content = buildPacketMarkdown(packet, record, this.includeBacklinks);
+      if (this.autoConvertBase64) {
+        content = await processBase64InMarkdown(this.app, record.filePath, content);
+      }
+      if (existing instanceof TFile) {
         await this.processInternalWrite(existing, () => content);
       } else {
-        let content = buildPacketMarkdown(packet, record, this.includeBacklinks);
-        if (this.autoConvertBase64) {
-          content = await processBase64InMarkdown(this.app, record.filePath, content);
-        }
-        if (existing instanceof TFile) {
-          await this.processInternalWrite(existing, () => content);
-        } else {
-          await this.createInternalFile(record.filePath, content);
-        }
+        await this.createInternalFile(record.filePath, content);
       }
     } finally {
       unlock();
     }
   }
 
-  async readFileContent(filePath: string): Promise<string> {
-    const file = this.app.vault.getAbstractFileByPath(filePath);
-    if (!(file instanceof TFile)) throw new Error(`文件不存在: ${filePath}`);
-    return this.app.vault.read(file);
-  }
 }
 
 export { FileService };
