@@ -11,6 +11,10 @@
   color: var(--text-normal);
 }
 
+.workspace-leaf-content .view-content.ostracon-view {
+  padding-bottom: 0;
+}
+
 /* ── Status ── */
 
 .ostracon-status-row {
