@@ -148,10 +148,12 @@
   gap: 6px;
   padding: 5px 6px;
   border-radius: 4px;
-  cursor: pointer;
+  cursor: grab;
   transition: background 80ms;
   user-select: none;
 }
+.ostracon-card-item:active { cursor: grabbing; }
+.ostracon-card-item.is-dragging { opacity: .55; }
 .ostracon-card-item:hover {
   background: var(--background-modifier-hover);
 }

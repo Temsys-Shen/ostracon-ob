@@ -19,6 +19,7 @@ import { OstraconApprovalModal } from "./approval-modal";
 import { VaultBrowserService } from "./vault-browser-service";
 import { QuoteService } from "./quote-service";
 import type { QuoteInsertRequest, QuoteInsertResult, QuoteTargetContext } from "./contract";
+import { CardDropService } from "./card-drop-service";
 
 interface OstraconPluginState {
   packets: OstraconPacketRecord[];
@@ -37,6 +38,7 @@ class OstraconPlugin extends Plugin {
   mutex: Mutex = new Mutex();
   vaultBrowser!: VaultBrowserService;
   quoteService!: QuoteService;
+  cardDropService!: CardDropService;
 
   async onload(): Promise<void> {
     const saved = await this.loadData() as { settings?: Partial<OstraconSettings>; packets?: OstraconPacketRecord[]; logs?: OstraconPluginState["logs"] } | null;
@@ -50,6 +52,7 @@ class OstraconPlugin extends Plugin {
     this.fileService = new FileService(this.app, this.mutex, this.settings.includeBacklinks, this.settings.autoConvertBase64);
     this.bridge = new OstraconWsBridge(this);
     this.quoteService = new QuoteService(this);
+    this.cardDropService = new CardDropService(this);
     this.vaultBrowser = new VaultBrowserService(this.app, (revision) => {
       if (this.bridge) this.bridge.broadcastEvent("vaultIndexChanged", { revision });
     });
@@ -61,6 +64,12 @@ class OstraconPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("rename", () => this.vaultBrowser.invalidate()));
     this.registerEvent(this.app.metadataCache.on("changed", () => this.vaultBrowser.invalidate()));
     this.registerEvent(this.app.metadataCache.on("deleted", () => this.vaultBrowser.invalidate()));
+    this.registerEvent(this.app.workspace.on("editor-drop", (event, editor, info) => {
+      void this.cardDropService.handleDrop(event, editor, info);
+    }));
+    this.registerDomEvent(this.app.workspace.containerEl, "dragover", (event) => {
+      this.cardDropService.handleDragOver(event);
+    });
 
     this.registerView(VIEW_TYPE_INBOX, (leaf) => new OstraconInboxView(leaf, this));
     this.addRibbonIcon("inbox", "获取MN数据", () => this.activateInboxView());

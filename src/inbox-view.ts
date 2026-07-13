@@ -1,6 +1,7 @@
 import { ItemView, Notice, WorkspaceLeaf, Modal, SuggestModal, App, TFile, Menu, MarkdownRenderer, type Component } from "obsidian";
 import { VIEW_TYPE_INBOX, type ViewHost, type OstraconCardSummary, type OstraconNotebookSummary } from "./contract";
 import { ensureFolder } from "./vault-utils";
+import { CARD_DRAG_MIME, serializeCardDrag, serializeCardDragText } from "./card-drop-service";
 
 type Tab = "notebook" | "tag" | "color";
 
@@ -361,6 +362,15 @@ class OstraconInboxView extends ItemView {
     });
     item.dataset.cardId = card.id;
     item.dataset.groupKey = group.key;
+    item.draggable = true;
+    item.addEventListener("dragstart", (event) => {
+      if (!event.dataTransfer) return;
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData(CARD_DRAG_MIME, serializeCardDrag(card.id));
+      event.dataTransfer.setData("text/plain", serializeCardDragText(card.id));
+      item.addClass("is-dragging");
+    });
+    item.addEventListener("dragend", () => item.removeClass("is-dragging"));
 
     const cb = item.createEl("input", { type: "checkbox" });
     cb.checked = isChecked;
