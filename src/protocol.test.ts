@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
-import { buildHelloPayload, buildPacketFilePath, createDefaultSettings, PROTOCOL_VERSION, type BridgeHost, type OstraconPacket } from "./contract";
+import { buildHelloPayload, buildPacketFilePath, createDefaultSettings, findAvailablePacketFilePath, normalizePacket, PROTOCOL_VERSION, type BridgeHost, type OstraconPacket } from "./contract";
+import { WebSocket } from "ws";
 import { OstraconWsBridge } from "./ws-bridge";
 
 function createPacket(id: string): OstraconPacket {
@@ -13,7 +14,7 @@ function createPacket(id: string): OstraconPacket {
     source: { platform: "MarginNote", title: "Example", url: "" },
     summary: "",
     tags: [],
-    objects: [{ id: "same-card", kind: "Card", title: "Card", excerpt: "", comment: "", sourceAnchor: "", hasImage: false, hasHandwriting: false }],
+    objects: [{ id: "same-card", kind: "Card", title: "Card", comment: "", sourceAnchor: "", hasImage: false, hasHandwriting: false }],
     relations: [],
     notes: "# Example",
     destination: { platform: "Obsidian", vault: "", folder: "Inbox" },
@@ -84,6 +85,17 @@ describe("Ostracon protocol", () => {
     expect(frames.at(-1)?.type).toBe("command_result");
   });
 
+  test("drops excerpt from legacy packet objects", () => {
+    const packet = createPacket("legacy-packet") as OstraconPacket & {
+      objects: Array<OstraconPacket["objects"][number] & { excerpt?: string }>;
+    };
+    packet.objects[0].excerpt = "legacy OCR";
+
+    const normalized = normalizePacket(packet);
+
+    expect(normalized.objects[0]).not.toHaveProperty("excerpt");
+  });
+
   test("returns Vault browser data through command_result", async () => {
     const bridge = new OstraconWsBridge(createHost());
     const frames: Array<Record<string, unknown>> = [];
@@ -116,12 +128,41 @@ describe("Ostracon protocol", () => {
     });
   });
 
-  test("uses packet ids instead of repeated card ids for destinations", () => {
+  test("rejects every additional MN connection until the current socket closes", () => {
+    const host = createHost();
+    const bridge = new OstraconWsBridge(host);
+    bridge.clients.add({ readyState: WebSocket.OPEN } as WebSocket);
+    const candidate = {
+      readyState: WebSocket.OPEN,
+      send: vi.fn(),
+      close: vi.fn(),
+    } as unknown as WebSocket;
+
+    expect(bridge.rejectAdditionalClient(candidate)).toBe(true);
+    expect(candidate.send).toHaveBeenCalledWith(expect.stringContaining("single_client_only"));
+    expect(candidate.close).toHaveBeenCalledWith(4009, "已有MarginNote设备连接，请先断开当前设备");
+    expect(host.logLine).toHaveBeenCalledWith("warn", "rejected additional MarginNote connection");
+  });
+
+  test("creates readable files directly in the configured folder", () => {
     const settings = createDefaultSettings();
-    const firstPath = buildPacketFilePath(settings, createPacket("packet-1"));
-    const secondPath = buildPacketFilePath(settings, createPacket("packet-2"));
-    expect(firstPath).not.toBe(secondPath);
-    expect(firstPath).toContain("packet-1.md");
-    expect(secondPath).toContain("packet-2.md");
+    const packet = createPacket("packet-1");
+    packet.objects[0].title = "第一张卡片";
+    expect(buildPacketFilePath(settings, packet)).toBe("Marginnote/第一张卡片.md");
+    expect(buildPacketFilePath(settings, packet, 1)).toBe("Marginnote/第一张卡片 1.md");
+    packet.fileName = "摘录回退标题";
+    expect(buildPacketFilePath(settings, packet)).toBe("Marginnote/摘录回退标题.md");
+    packet.fileName = "";
+    packet.objects[0].title = "";
+    packet.source.title = "";
+    expect(buildPacketFilePath(settings, packet)).toBe("Marginnote/Untitled.md");
+  });
+
+  test("adds a numeric suffix when readable file names already exist", () => {
+    const settings = createDefaultSettings();
+    const packet = createPacket("packet-1");
+    packet.fileName = "重复标题";
+    const existing = new Set(["Marginnote/重复标题.md", "Marginnote/重复标题 1.md"]);
+    expect(findAvailablePacketFilePath(settings, packet, path => existing.has(path))).toBe("Marginnote/重复标题 2.md");
   });
 });

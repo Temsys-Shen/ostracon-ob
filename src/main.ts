@@ -1,13 +1,14 @@
 import { Notice, Plugin, normalizePath } from "obsidian";
 import {
   VIEW_TYPE_INBOX, DEFAULT_OUTPUT_FOLDER, createDefaultSettings, normalizePacket,
-  buildPacketFilePath, buildPacketRecord, buildConnectionUrl,
+  buildPacketRecord, buildConnectionUrl,
+  findAvailablePacketFilePath,
   createId,
   type OstraconCardSummary, type OstraconNotebookSummary,
   type OstraconSettings, type OstraconPacket, type OstraconPacketRecord, type OstraconRecordMeta,
 } from "./contract";
 import { buildPacketMarkdown } from "./markdown-builder";
-import { processBase64InMarkdown } from "./image-service";
+import { containsHandwritingSvgDataURL, processBase64InMarkdown } from "./image-service";
 import { FileService } from "./file-service";
 import { Mutex } from "./mutex";
 import { OstraconWsBridge } from "./ws-bridge";
@@ -256,7 +257,7 @@ class OstraconPlugin extends Plugin {
   }
 
   async processBase64InContent(content: string, targetPath: string): Promise<string> {
-    if (!this.settings.autoConvertBase64 || !content) return content;
+    if (!content || (!this.settings.autoConvertBase64 && !containsHandwritingSvgDataURL(content))) return content;
     try {
       return await processBase64InMarkdown(this.app, targetPath, content);
     } catch (e) {
@@ -267,9 +268,14 @@ class OstraconPlugin extends Plugin {
 
   async ingestPacket(packet: OstraconPacket, meta?: OstraconRecordMeta): Promise<OstraconPacketRecord> {
     const normalized = normalizePacket(packet);
-    const filePath = buildPacketFilePath(this.settings, normalized);
+    const previousRecord = this.state.packets.find(item => item.id === normalized.id);
+    const filePath = previousRecord?.filePath || findAvailablePacketFilePath(
+      this.settings,
+      normalized,
+      path => Boolean(this.app.vault.getAbstractFileByPath(path)),
+    );
 
-    if (this.settings.autoConvertBase64 && normalized.notes) {
+    if (normalized.notes && (this.settings.autoConvertBase64 || containsHandwritingSvgDataURL(normalized.notes))) {
       normalized.notes = await this.processBase64InContent(normalized.notes, filePath);
     }
 

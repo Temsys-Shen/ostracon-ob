@@ -38,7 +38,6 @@ interface OstraconObject {
   id: string;
   kind: string;
   title: string;
-  excerpt: string;
   comment: string;
   sourceAnchor: string;
   hasImage: boolean;
@@ -60,6 +59,7 @@ interface OstraconPacket {
   notes: string;
   destination: { platform: string; vault: string; folder: string };
   format?: string;
+  fileName?: string;
 }
 
 interface OstraconPacketRecord {
@@ -106,7 +106,6 @@ interface OstraconNotebookSummary {
 interface OstraconCardSummary {
   id: string;
   title: string;
-  excerpt: string;
   comment: string;
   sourceAnchor: string;
   selected?: boolean;
@@ -242,7 +241,6 @@ function normalizePacket(packet: OstraconPacket): OstraconPacket {
       id: item.id || createId("object"),
       kind: item.kind || "Card",
       title: item.title || "",
-      excerpt: item.excerpt || "",
       comment: item.comment || "",
       sourceAnchor: item.sourceAnchor || "",
       hasImage: Boolean(item.hasImage),
@@ -251,6 +249,7 @@ function normalizePacket(packet: OstraconPacket): OstraconPacket {
     relations: Array.isArray(packet.relations) ? packet.relations : [],
     notes: packet.notes || "",
     format: packet.format || "",
+    fileName: packet.fileName || "",
     destination: packet.destination || { platform: "Obsidian", vault: "", folder: "Inbox" },
   };
 }
@@ -266,11 +265,23 @@ function summarizePacket(packet: OstraconPacket) {
   };
 }
 
-function buildPacketFilePath(settings: OstraconSettings, packet: OstraconPacket): string {
+function buildPacketFilePath(settings: OstraconSettings, packet: OstraconPacket, suffix = 0): string {
   const outputFolder = sanitizePath(settings.outputFolder || DEFAULT_OUTPUT_FOLDER);
-  const sourceTitle = sanitizeSegment(packet.source?.title || packet.id, packet.id);
+  const firstCardTitle = packet.objects && packet.objects[0] ? packet.objects[0].title : "";
+  const sourceTitle = sanitizeSegment(packet.fileName || firstCardTitle || packet.source?.title || "Untitled", "Untitled");
+  const fileName = suffix > 0 ? `${sourceTitle} ${suffix}` : sourceTitle;
   const ext = fileExtensionForFormat(packet.format);
-  return normalizePath(`${outputFolder}/${sourceTitle}/${packet.id}${ext}`);
+  return normalizePath(`${outputFolder}/${fileName}${ext}`);
+}
+
+function findAvailablePacketFilePath(settings: OstraconSettings, packet: OstraconPacket, pathExists: (path: string) => boolean): string {
+  let suffix = 0;
+  let filePath = buildPacketFilePath(settings, packet, suffix);
+  while (pathExists(filePath)) {
+    suffix += 1;
+    filePath = buildPacketFilePath(settings, packet, suffix);
+  }
+  return filePath;
 }
 
 function buildPacketRecord(packet: OstraconPacket, filePath: string, meta: OstraconRecordMeta = {}): OstraconPacketRecord {
@@ -316,7 +327,7 @@ function fileExtensionForFormat(f?: string): ".md" | ".canvas" {
 export {
   PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT, DEFAULT_QUOTE_TEMPLATE,
   nowIso, sanitizeSegment, normalizeTags, createId,
-  createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath, fileExtensionForFormat,
+  createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath, findAvailablePacketFilePath, fileExtensionForFormat,
   buildPacketRecord, buildConnectionUrl, buildHelloPayload, buildAckPayload,
 };
 

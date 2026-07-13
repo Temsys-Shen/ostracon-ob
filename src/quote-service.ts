@@ -1,4 +1,4 @@
-import { TFile, normalizePath, type App, type Editor } from "obsidian";
+import { MarkdownView, TFile, normalizePath, type App, type Editor } from "obsidian";
 import { processBase64InMarkdown } from "./image-service";
 import { renderQuoteTemplate } from "./quote-template";
 import type { QuoteInsertRequest, QuoteInsertResult, QuoteSelection, QuoteTargetContext } from "./contract";
@@ -44,14 +44,27 @@ class QuoteService {
     this.host = host;
   }
 
-  getContext(): QuoteTargetContext {
+  private focusedCursorTarget(): ResolvedTarget | null {
     const activeEditor = this.host.app.workspace.activeEditor;
-    const editorFile = activeEditor?.file;
+    const view = this.host.app.workspace.getActiveViewOfType(MarkdownView);
+    const activeElement = document.activeElement;
+    if (
+      !activeEditor?.editor || !view || view.getMode() !== "source" ||
+      activeEditor.editor !== view.editor || !isMarkdownFile(view.file) ||
+      !activeElement || !view.contentEl.contains(activeElement)
+    ) {
+      return null;
+    }
+    return { file: view.file, editor: view.editor };
+  }
+
+  getContext(): QuoteTargetContext {
+    const cursorTarget = this.focusedCursorTarget();
     const activeFile = this.host.app.workspace.getActiveFile();
     return {
       cursor: {
-        available: Boolean(activeEditor?.editor && isMarkdownFile(editorFile)),
-        filePath: isMarkdownFile(editorFile) ? editorFile.path : null,
+        available: Boolean(cursorTarget),
+        filePath: cursorTarget ? cursorTarget.file.path : null,
       },
       activeFile: {
         available: isMarkdownFile(activeFile),
@@ -62,9 +75,7 @@ class QuoteService {
 
   private resolveTarget(request: QuoteInsertRequest): ResolvedTarget | null {
     if (request.target === "cursor") {
-      const activeEditor = this.host.app.workspace.activeEditor;
-      if (!activeEditor?.editor || !isMarkdownFile(activeEditor.file)) return null;
-      return { file: activeEditor.file, editor: activeEditor.editor };
+      return this.focusedCursorTarget();
     }
 
     if (request.target === "active-file") {

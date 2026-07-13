@@ -166,8 +166,23 @@ class OstraconWsBridge {
     }, 30000);
   }
 
+  rejectAdditionalClient(ws: WebSocket): boolean {
+    if (this.clients.size === 0) return false;
+    const message = "已有MarginNote设备连接，请先断开当前设备";
+    this.send(ws, {
+      type: "error",
+      requestId: "",
+      payload: { message, code: "single_client_only" },
+    });
+    ws.close(4009, message);
+    this.plugin.logLine("warn", "rejected additional MarginNote connection");
+    return true;
+  }
+
   attachWebSocketHandlers(): void {
     this.wss?.on("connection", (ws, request) => {
+      if (this.rejectAdditionalClient(ws)) return;
+
       let clientName = "";
       let clientId: string | null = null;
 
@@ -208,6 +223,10 @@ class OstraconWsBridge {
 
       this.clients.add(ws);
       this.clientState.set(ws, client);
+      ws.on("close", () => {
+        this.clients.delete(ws);
+        this.clientState.delete(ws);
+      });
 
       const socket = ws as WebSocket & { isAlive?: boolean };
       socket.isAlive = true;
@@ -290,11 +309,6 @@ class OstraconWsBridge {
         });
         this.plugin.logLine("error", detail);
       }
-    });
-
-    ws.on("close", () => {
-      this.clients.delete(ws);
-      this.clientState.delete(ws);
     });
   }
 

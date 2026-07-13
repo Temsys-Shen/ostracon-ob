@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { TFile } from "obsidian";
+import { MarkdownView, TFile } from "obsidian";
 import { DEFAULT_QUOTE_TEMPLATE } from "./quote-template";
 
 const mocks = vi.hoisted(() => ({
@@ -16,6 +16,13 @@ function markdownFile(path: string) {
 function createHost() {
   const file = markdownFile("Notes/Current.md");
   const editor = { replaceSelection: vi.fn() };
+  const focusedElement = {};
+  const view = Object.assign(Object.create(MarkdownView.prototype) as MarkdownView, {
+    file,
+    editor,
+    getMode: vi.fn(() => "source"),
+    contentEl: { contains: vi.fn((element: unknown) => element === focusedElement) },
+  });
   const bridge = { requestClientCommand: vi.fn() };
   const vault = {
     getAbstractFileByPath: vi.fn(),
@@ -24,9 +31,11 @@ function createHost() {
   const workspace: {
     activeEditor: { file: ReturnType<typeof markdownFile>; editor: typeof editor } | null;
     getActiveFile: ReturnType<typeof vi.fn>;
+    getActiveViewOfType: ReturnType<typeof vi.fn>;
   } = {
     activeEditor: { file, editor },
     getActiveFile: vi.fn(() => file),
+    getActiveViewOfType: vi.fn(() => view),
   };
   const app = { workspace, vault };
   return {
@@ -41,12 +50,15 @@ function createHost() {
     vault,
     workspace,
     app,
+    view,
+    focusedElement,
   };
 }
 
 describe("QuoteService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("document", { activeElement: null });
     mocks.processBase64InMarkdown.mockImplementation(async (_app, _path, markdown) => markdown);
   });
 
@@ -60,6 +72,7 @@ describe("QuoteService", () => {
 
   test("replaces the editor selection at the cursor target", async () => {
     const fixture = createHost();
+    vi.stubGlobal("document", { activeElement: fixture.focusedElement });
     fixture.bridge.requestClientCommand.mockResolvedValue({
       kind: "text", text: "quote", image: null, noteId: "n1", link: "marginnote4app://note/n1",
     });
@@ -71,6 +84,7 @@ describe("QuoteService", () => {
 
   test("silently stops when MN has no selection", async () => {
     const fixture = createHost();
+    vi.stubGlobal("document", { activeElement: fixture.focusedElement });
     fixture.bridge.requestClientCommand.mockResolvedValue(null);
     const service = new QuoteService(fixture.host);
     await expect(service.insert({ target: "cursor" })).resolves.toBeNull();
@@ -98,6 +112,7 @@ describe("QuoteService", () => {
 
   test("converts image data before writing", async () => {
     const fixture = createHost();
+    vi.stubGlobal("document", { activeElement: fixture.focusedElement });
     fixture.bridge.requestClientCommand.mockResolvedValue({
       kind: "image", text: null, image: { mime: "image/png", base64: "aW1hZ2U=" }, noteId: null, link: null,
     });
@@ -110,5 +125,15 @@ describe("QuoteService", () => {
       "> ![MarginNote引文](data:image/png;base64,aW1hZ2U=)\n",
     );
     expect(fixture.editor.replaceSelection).toHaveBeenCalledWith("> ![MarginNote引文](assets/image.png)\n");
+  });
+
+  test("disables the cursor target when focus leaves the markdown body", () => {
+    const fixture = createHost();
+    vi.stubGlobal("document", { activeElement: {} });
+    const service = new QuoteService(fixture.host);
+    expect(service.getContext()).toMatchObject({
+      cursor: { available: false, filePath: null },
+      activeFile: { available: true, filePath: fixture.file.path },
+    });
   });
 });

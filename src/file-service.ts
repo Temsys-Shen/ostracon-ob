@@ -2,7 +2,7 @@ import { TFile, type App } from "obsidian";
 import { type OstraconPacketRecord } from "./contract";
 import { buildPacketMarkdown } from "./markdown-builder";
 import { ensureFolder } from "./vault-utils";
-import { processBase64InMarkdown } from "./image-service";
+import { containsHandwritingSvgDataURL, processBase64InMarkdown } from "./image-service";
 import { Mutex } from "./mutex";
 
 class FileService {
@@ -54,7 +54,7 @@ class FileService {
     const unlock = await this.mutex.acquire(record.filePath);
     try {
       let content = buildPacketMarkdown(packet, record, this.includeBacklinks);
-      if (this.autoConvertBase64) {
+      if (this.autoConvertBase64 || containsHandwritingSvgDataURL(content)) {
         content = await processBase64InMarkdown(this.app, record.filePath, content);
       }
       if (existing instanceof TFile) {

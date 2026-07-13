@@ -22,7 +22,6 @@ class OstraconInboxView extends ItemView {
   isConnected = false;
 
   collapsedGroups: Set<string> = new Set();
-  expandedContentGroups: Set<string> = new Set();
   cardOrder: string[] = [];
   lastClickedIndex = -1;
   isShiftDown = false;
@@ -183,7 +182,6 @@ class OstraconInboxView extends ItemView {
       });
       btn.addEventListener("click", () => {
         this.activeTab = item.id;
-        this.expandedContentGroups.clear();
         this.render();
       });
     }
@@ -196,7 +194,7 @@ class OstraconInboxView extends ItemView {
     const searchInput = bar.createEl("input", {
       cls: "ostracon-search-inline",
       type: "search",
-      placeholder: "搜索标题/摘录...",
+      placeholder: "搜索标题/评论...",
       value: this.searchQuery,
     });
     searchInput.addEventListener("input", () => {
@@ -345,24 +343,8 @@ class OstraconInboxView extends ItemView {
       text: `${group.label}（${group.cards.length}）`,
     });
 
-    const isExpanded = this.expandedContentGroups.has(group.key);
-    const contentBtn = head.createSpan({
-      cls: `ostracon-group-content-btn${isExpanded ? " is-active" : ""}`,
-      text: "≡",
-      attr: { role: "button", tabindex: "0" },
-    });
-    contentBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (this.expandedContentGroups.has(group.key)) {
-        this.expandedContentGroups.delete(group.key);
-      } else {
-        this.expandedContentGroups.add(group.key);
-      }
-      this.refresh();
-    });
-
     head.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).closest("input, .ostracon-group-content-btn")) return;
+      if ((e.target as HTMLElement).closest("input")) return;
       if (this.collapsedGroups.has(group.key)) {
         this.collapsedGroups.delete(group.key);
       } else {
@@ -413,14 +395,6 @@ class OstraconInboxView extends ItemView {
     }
 
     item.createSpan({ cls: "ostracon-card-title", text: card.title || "(无标题)" });
-
-    const showExcerpt = this.expandedContentGroups.has(group.key);
-    if (showExcerpt && card.excerpt) {
-      item.createDiv({
-        cls: "ostracon-card-excerpt",
-        text: card.excerpt.length > 60 ? card.excerpt.slice(0, 60) + "…" : card.excerpt,
-      });
-    }
 
     item.addEventListener("mouseenter", () => {
       if (!this.isDragging) return;
@@ -658,7 +632,6 @@ class OstraconInboxView extends ItemView {
     return this.cards.filter(
       (c) =>
         (c.title || "").toLowerCase().includes(q) ||
-        (c.excerpt || "").toLowerCase().includes(q) ||
         (c.comment || "").toLowerCase().includes(q)
     );
   }
@@ -698,11 +671,6 @@ class CardDetailModal extends Modal {
       if (this.card.colorIndex !== undefined) {
         meta.createSpan({ text: `颜色: ${MN_COLOR_NAMES[this.card.colorIndex % MN_COLOR_NAMES.length]}`, cls: "ostracon-detail-color" });
       }
-    }
-
-    if (this.card.excerpt) {
-      contentEl.createEl("h3", { text: "摘录" });
-      contentEl.createEl("div", { cls: "ostracon-detail-block", text: this.card.excerpt });
     }
 
     if (this.card.comment) {

@@ -3,6 +3,7 @@ import { normalizePath, type App } from "obsidian";
 import { ensureFolder, resolveAttachmentFolder } from "./vault-utils";
 
 const DATA_URL_REGEX = /!\[([^\]]*)\]\(data:image\/([\w.+-]+);base64,([A-Za-z0-9+/=]+)\)/g;
+const HANDWRITING_SVG_REGEX = /!\[handwriting\]\(data:image\/svg\+xml;base64,/;
 
 const MIME_EXT_MAP: Record<string, string> = {
   png: "png", jpeg: "jpg", jpg: "jpg", gif: "gif",
@@ -18,6 +19,10 @@ function decodeBase64(str: string): ArrayBuffer {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes.buffer;
+}
+
+function containsHandwritingSvgDataURL(markdown: string): boolean {
+  return HANDWRITING_SVG_REGEX.test(markdown);
 }
 
 function md5Hex(data: ArrayBuffer): string {
@@ -47,7 +52,9 @@ async function processBase64InMarkdown(
 
     const data = decodeBase64(base64);
     const hash = md5Hex(data);
-    const fileName = `${hash}.${ext}`;
+    const fileName = mime.toLowerCase() === "svg+xml" && alt === "handwriting"
+      ? `handwriting-${hash}.${ext}`
+      : `${hash}.${ext}`;
     const filePath = normalizePath(`${attachDir}/${fileName}`);
 
     const existing = app.vault.getAbstractFileByPath(filePath);
@@ -78,4 +85,4 @@ function getRelativePath(fromPath: string, toPath: string): string {
   return normalizePath(rel.join("/"));
 }
 
-export { processBase64InMarkdown };
+export { containsHandwritingSvgDataURL, processBase64InMarkdown };

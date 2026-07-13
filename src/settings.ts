@@ -68,7 +68,7 @@ class OstraconSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("包含 MarginNote 回链")
-      .setDesc("在笔记末尾添加指向 MN 卡片的链接")
+      .setDesc("将卡片标题链接到MarginNote")
       .addToggle((toggle) => {
         toggle.setValue(Boolean(this.plugin.settings.includeBacklinks));
         toggle.onChange(async (value) => {

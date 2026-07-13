@@ -1,11 +1,13 @@
 .ostracon-view {
   box-sizing: border-box;
-  padding: 8px 10px;
+  padding: 8px 10px 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
   height: 100%;
+  max-height: 100%;
   min-height: 0;
+  overflow: hidden;
   color: var(--text-normal);
 }
 
@@ -77,6 +79,7 @@
 
 .ostracon-card-area {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -136,25 +139,6 @@
   white-space: nowrap;
 }
 
-.ostracon-group-content-btn {
-  padding: 1px 3px;
-  background: none;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-muted);
-  opacity: 0.4;
-  flex-shrink: 0;
-  line-height: 1;
-  user-select: none;
-  transition: opacity 120ms;
-}
-.ostracon-group-content-btn:hover,
-.ostracon-group-content-btn.is-active {
-  opacity: 1;
-  color: var(--text-normal);
-}
-
 /* ── Card Item ── */
 
 .ostracon-card-item {
@@ -199,26 +183,16 @@
   color: var(--text-normal);
 }
 
-.ostracon-card-excerpt {
-  width: 100%;
-  font-size: 10px;
-  color: var(--text-muted);
-  padding: 2px 0 0 22px;
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* ── Action bar ── */
 
 .ostracon-action-bar {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--background-modifier-border);
-  margin-top: auto;
+  margin-top: 0;
 }
 
 .ostracon-count {
