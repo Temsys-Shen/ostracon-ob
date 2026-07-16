@@ -5,6 +5,8 @@ const DEFAULT_QUOTE_TEMPLATE = `{{content|trim|blockquote}}
 type QuoteTemplateContext = {
   content: string;
   link: string | null;
+  heading?: string;
+  title?: string;
 };
 
 type QuoteFilter = (value: string) => string;
@@ -12,7 +14,7 @@ type QuoteFilter = (value: string) => string;
 const FILTERS: Record<string, QuoteFilter> = {
   trim: value => value.trim(),
   singleline: value => value.replace(/\s+/g, " "),
-  blockquote: value => value
+    blockquote: value => value
     .split("\n")
     .map(line => line ? `> ${line}` : ">")
     .join("\n"),
@@ -21,15 +23,16 @@ const FILTERS: Record<string, QuoteFilter> = {
 function renderVariable(expression: string, context: QuoteTemplateContext): string {
   const parts = expression.split("|").map(part => part.trim());
   const variable = parts.shift();
-  if (variable !== "content" && variable !== "link") {
+  if (variable !== "content" && variable !== "link" && variable !== "heading" && variable !== "title") {
     throw new Error(`未知模板变量: ${variable || expression}`);
   }
 
-  let value = variable === "content" ? context.content : context.link || "";
+  let value = variable === "content" ? context.content : variable === "heading" ? context.heading || "" : variable === "title" ? context.title || "" : context.link || "";
   for (const filterName of parts) {
     const filter = FILTERS[filterName];
-    if (!filter) throw new Error(`未知模板过滤器: ${filterName}`);
-    value = filter(value);
+    if (filter) value = filter(value);
+    else if (filterName === "link" && variable === "title") value = context.link ? `[${value.replace(/[[\]\\]/g, "\\$&")}](${context.link})` : value;
+    else throw new Error(`未知模板过滤器: ${filterName}`);
   }
   return value;
 }

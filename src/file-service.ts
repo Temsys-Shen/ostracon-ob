@@ -8,19 +8,13 @@ import { Mutex } from "./mutex";
 class FileService {
   private app: App;
   private mutex: Mutex;
-  private includeBacklinks: boolean;
   private autoConvertBase64: boolean;
   internalWritePaths: Set<string> = new Set();
 
-  constructor(app: App, mutex: Mutex, includeBacklinks = true, autoConvertBase64 = true) {
+  constructor(app: App, mutex: Mutex, autoConvertBase64 = true) {
     this.app = app;
     this.mutex = mutex;
-    this.includeBacklinks = includeBacklinks;
     this.autoConvertBase64 = autoConvertBase64;
-  }
-
-  setIncludeBacklinks(value: boolean) {
-    this.includeBacklinks = value;
   }
 
   setAutoConvertBase64(value: boolean) {
@@ -53,7 +47,7 @@ class FileService {
 
     const unlock = await this.mutex.acquire(record.filePath);
     try {
-      let content = buildPacketMarkdown(packet, record, this.includeBacklinks);
+      let content = buildPacketMarkdown(packet, record, true);
       if (this.autoConvertBase64 || containsHandwritingSvgDataURL(content)) {
         content = await processBase64InMarkdown(this.app, record.filePath, content);
       }

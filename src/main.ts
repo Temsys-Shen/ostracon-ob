@@ -49,7 +49,7 @@ class OstraconPlugin extends Plugin {
       logs: Array.isArray(saved?.logs) ? saved.logs : [],
     };
 
-    this.fileService = new FileService(this.app, this.mutex, this.settings.includeBacklinks, this.settings.autoConvertBase64);
+    this.fileService = new FileService(this.app, this.mutex, this.settings.autoConvertBase64);
     this.bridge = new OstraconWsBridge(this);
     this.quoteService = new QuoteService(this);
     this.cardDropService = new CardDropService(this);
@@ -105,7 +105,6 @@ class OstraconPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     this.settings.outputFolder = normalizePath(this.settings.outputFolder || DEFAULT_OUTPUT_FOLDER);
-    this.fileService.setIncludeBacklinks(this.settings.includeBacklinks);
     this.fileService.setAutoConvertBase64(this.settings.autoConvertBase64);
     await this.persistState();
     this.updateStatusBar();
@@ -243,21 +242,21 @@ class OstraconPlugin extends Plugin {
     if (!this.isServerRunning()) {
       await this.startServer();
     }
-    const raw = await this.bridge.requestClientCommand("fetchCards", { cardIds, format }, 20000);
+    const raw = await this.bridge.requestClientCommand("fetchCards", { cardIds, format, cardTemplate: this.settings.cardTemplate }, 20000);
     if (!raw || typeof raw !== "object" || !(raw as { packet?: unknown }).packet) {
       throw new Error("MN没有返回可导入的数据包");
     }
     const packet = (raw as { packet: OstraconPacket }).packet;
     const normalized = normalizePacket(packet);
     const record = buildPacketRecord(normalized, "", { transport: "pull" });
-    return buildPacketMarkdown(normalized, record, this.settings.includeBacklinks);
+    return buildPacketMarkdown(normalized, record, true);
   }
 
   async previewCards(cardIds: string[]): Promise<string> {
     if (!this.isServerRunning()) {
       await this.startServer();
     }
-    const raw = await this.bridge.requestClientCommand("fetchCards", { cardIds, format: "markdown" }, 30000);
+    const raw = await this.bridge.requestClientCommand("fetchCards", { cardIds, format: "markdown", cardTemplate: this.settings.cardTemplate }, 30000);
     if (!raw || typeof raw !== "object" || !(raw as { packet?: unknown }).packet) {
       throw new Error("MN没有返回可预览的数据");
     }

@@ -21,9 +21,9 @@ interface OstraconSettings {
   port: number;
   outputFolder: string;
   autoStartServer: boolean;
-  includeBacklinks: boolean;
   autoConvertBase64: boolean;
   quoteTemplate: string;
+  cardTemplate: string;
   createQuoteCard: boolean;
   approvedDevices: Array<{ clientId: string; name: string; approvedAt: string }>;
 }
@@ -150,7 +150,7 @@ export interface BridgeHost {
   ingestPacket: (packet: OstraconPacket, meta?: OstraconRecordMeta) => Promise<OstraconPacketRecord>;
   logLine: (level: string, message: string) => void;
   getVaultName: () => string;
-  settings: Pick<OstraconSettings, "port" | "host" | "outputFolder" | "includeBacklinks">;
+  settings: Pick<OstraconSettings, "port" | "host" | "outputFolder">;
   isDeviceApproved: (clientId: string) => boolean;
   approveDevice: (clientId: string, name: string) => void;
   requestApproval: (clientId: string, name: string, callbacks: { onApprove: () => void; onDeny: () => void }) => void;
@@ -212,9 +212,9 @@ function createDefaultSettings(): OstraconSettings {
     port: DEFAULT_PORT,
     outputFolder: DEFAULT_OUTPUT_FOLDER,
     autoStartServer: true,
-    includeBacklinks: true,
     autoConvertBase64: true,
     quoteTemplate: DEFAULT_QUOTE_TEMPLATE,
+    cardTemplate: "{{heading}} {{title|link}}\n\n{{content}}",
     createQuoteCard: true,
     approvedDevices: [],
   };
@@ -306,13 +306,12 @@ function buildConnectionUrl(settings: Pick<OstraconSettings, "host" | "port">): 
   return `ws://${hostPart}:${port}`;
 }
 
-function buildHelloPayload(settings: Pick<OstraconSettings, "outputFolder" | "includeBacklinks">, vaultName?: string) {
+function buildHelloPayload(settings: Pick<OstraconSettings, "outputFolder">, vaultName?: string) {
   return {
     protocolVersion: PROTOCOL_VERSION, pluginId: PLUGIN_ID,
     serverTime: nowIso(), capabilities: ["hello", "ping", "pong", "event", "command", "command_result", "ack", "error"],
     outputFolder: settings.outputFolder || DEFAULT_OUTPUT_FOLDER,
     vaultName: vaultName || "",
-    includeBacklinks: settings.includeBacklinks,
   };
 }
 
