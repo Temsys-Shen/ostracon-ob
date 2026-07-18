@@ -525,3 +525,11 @@
   .ostracon-template-header { align-items: flex-start; flex-direction: column; }
   .ostracon-template-actions { justify-content: flex-start; }
 }
+.ostracon-html-render-source {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+  width: 960px;
+  visibility: hidden;
+  pointer-events: none;
+}

@@ -36,7 +36,14 @@ describe("VaultBrowserService", () => {
         unresolvedLinks: {},
       },
     };
-    const service = new VaultBrowserService(app as never, () => {});
+    const htmlRenderer = {
+      render: async (markdown: string, sourcePath: string) => ({
+        renderedHtml: `<article data-source-path="${sourcePath}">${markdown}</article>`,
+        plainText: markdown,
+        renderVersion: 1,
+      }),
+    };
+    const service = new VaultBrowserService(app as never, () => {}, htmlRenderer);
     const root = service.listFolder("");
     expect(root.folders).toEqual([{ path: "Folder", name: "Folder" }]);
     const detail = await service.getDocument("Folder/Test.md");
@@ -44,5 +51,8 @@ describe("VaultBrowserService", () => {
     expect(detail.markdown).not.toContain("title: Demo");
     expect(detail.markdown).toContain("ostracon-asset://Assets%2Fpic.png");
     expect(detail.markdown).toContain("ostracon-doc://Other.md");
+    expect(detail.renderedHtml).toContain("data-source-path=\"Folder/Test.md\"");
+    expect(detail.renderedHtml).toContain("ostracon-asset://Assets%2Fpic.png");
+    expect(detail.renderVersion).toBe(1);
   });
 });

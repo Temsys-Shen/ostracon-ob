@@ -1,5 +1,6 @@
 import MiniSearch from "minisearch";
 import { App, TFile, getAllTags, normalizePath } from "obsidian";
+import { ObsidianHtmlRenderService } from "./html-render-service";
 
 type DocumentSummary = {
   path: string;
@@ -46,11 +47,13 @@ class VaultBrowserService {
   private searchError = "";
   private searchBuild: Promise<void> | null = null;
   private onChange: BrowserChangeHandler;
+  private htmlRenderer: Pick<ObsidianHtmlRenderService, "render">;
   private invalidateTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(app: App, onChange: BrowserChangeHandler) {
+  constructor(app: App, onChange: BrowserChangeHandler, htmlRenderer?: Pick<ObsidianHtmlRenderService, "render">) {
     this.app = app;
     this.onChange = onChange;
+    this.htmlRenderer = htmlRenderer || new ObsidianHtmlRenderService(app);
   }
 
   invalidate(): void {
@@ -236,6 +239,25 @@ class VaultBrowserService {
     return { markdown: markdown.trim(), assets };
   }
 
+  private rewriteImageEmbeds(file: TFile, content: string): string {
+    const cache = this.app.metadataCache.getFileCache(file);
+    const replacements: Array<{ start: number; end: number; value: string }> = [];
+    for (const embed of cache?.embeds || []) {
+      const target = this.app.metadataCache.getFirstLinkpathDest(embed.link, file.path);
+      if (!(target instanceof TFile) || !IMAGE_EXTENSIONS.has(target.extension.toLowerCase())) continue;
+      replacements.push({
+        start: embed.position.start.offset,
+        end: embed.position.end.offset,
+        value: `![${embed.displayText || target.basename}](ostracon-asset://${encodeURIComponent(target.path)})`,
+      });
+    }
+    let markdown = content;
+    for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
+      markdown = markdown.slice(0, replacement.start) + replacement.value + markdown.slice(replacement.end);
+    }
+    return markdown;
+  }
+
   async getDocument(path: string) {
     const normalized = normalizePath(String(path || ""));
     const file = this.app.vault.getAbstractFileByPath(normalized);
@@ -243,10 +265,12 @@ class VaultBrowserService {
     const cache = this.app.metadataCache.getFileCache(file);
     const content = await this.app.vault.cachedRead(file);
     const transformed = this.rewriteMarkdown(file, content);
+    const rendered = await this.htmlRenderer.render(this.rewriteImageEmbeds(file, content), file.path);
     const outgoing = Object.keys(this.app.metadataCache.resolvedLinks[file.path] || {});
     return {
       ...this.summarize(file),
       markdown: transformed.markdown,
+      ...rendered,
       assets: transformed.assets,
       headings: (cache?.headings || []).map(item => ({ heading: item.heading, level: item.level })),
       outgoing,
