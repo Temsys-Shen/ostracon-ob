@@ -1,5 +1,5 @@
-import { App, Plugin, PluginSettingTab, Setting, Notice, normalizePath } from "obsidian";
-import { DEFAULTS, DEFAULT_OUTPUT_FOLDER, type SettingsHost } from "./contract";
+import { App, Plugin, PluginSettingTab, Setting, Notice, ToggleComponent, normalizePath } from "obsidian";
+import { DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_QUOTE_TEMPLATE, DEFAULT_CARD_TEMPLATE, type SettingsHost } from "./contract";
 import { renderQuoteTemplate, validateQuoteTemplate } from "./quote-template";
 
 class OstraconSettingTab extends PluginSettingTab {
@@ -41,11 +41,7 @@ class OstraconSettingTab extends PluginSettingTab {
     });
 
     const templates = section("模板", true);
-    new Setting(templates).setName("创建引文卡片").addToggle(toggle => {
-      toggle.setValue(this.plugin.settings.createQuoteCard); toggle.onChange(async value => { this.plugin.settings.createQuoteCard = value; await this.plugin.saveSettings(); });
-    });
-    this.renderTemplate(templates, "引用模板", this.plugin.settings.quoteTemplate, { content: "第一行\n第二行", link: "marginnote4app://note/example" }, value => { this.plugin.settings.quoteTemplate = value; });
-    this.renderTemplate(templates, "卡片模板", this.plugin.settings.cardTemplate, { heading: "##", title: "示例卡片", content: "示例正文", link: "marginnote4app://note/example" }, value => { this.plugin.settings.cardTemplate = value; });
+    this.renderTemplateWorkspace(templates);
 
     const devices = section("设备", false);
     const approved = this.plugin.settings.approvedDevices || [];
@@ -55,18 +51,72 @@ class OstraconSettingTab extends PluginSettingTab {
     }));
   }
 
-  private renderTemplate(container: HTMLElement, name: string, initial: string, context: Parameters<typeof renderQuoteTemplate>[1], save: (value: string) => void): void {
-    let input!: HTMLTextAreaElement;
-    const setting = new Setting(container).setName(name).addTextArea(text => { input = text.inputEl; text.inputEl.rows = 7; text.setValue(initial); });
-    setting.settingEl.addClass("ostracon-template-setting");
-    const tools = setting.controlEl.createDiv({ cls: "ostracon-template-tools" });
-    const status = setting.controlEl.createDiv({ cls: "ostracon-template-status" });
-    const preview = setting.controlEl.createEl("pre", { cls: "ostracon-template-preview" });
-    const tokens = name === "卡片模板" ? ["{{heading}}", "{{title}}", "{{title|link}}", "{{content}}", "|trim", "|singleline"] : ["{{content}}", "{{link}}", "{{#link}}{{/link}}", "|trim", "|singleline", "|blockquote"];
-    const update = async () => { try { validateQuoteTemplate(input.value); preview.setText(renderQuoteTemplate(input.value, context)); status.setText("语法有效"); status.removeClass("is-error"); save(input.value); await this.plugin.saveSettings(); } catch (error) { status.setText(error instanceof Error ? error.message : String(error)); status.addClass("is-error"); } };
+  private renderTemplateWorkspace(container: HTMLElement): void {
+    const tabs = container.createDiv({ cls: "ostracon-template-tabs", attr: { role: "tablist", "aria-label": "模板类型" } });
+    const panels = container.createDiv({ cls: "ostracon-template-workspace" });
+    const quoteTab = tabs.createEl("button", { text: "引用模板", cls: "is-active", attr: { type: "button", role: "tab", "aria-selected": "true" } });
+    const cardTab = tabs.createEl("button", { text: "卡片模板", attr: { type: "button", role: "tab", "aria-selected": "false" } });
+    const quotePanel = this.createTemplatePanel(panels, {
+      name: "引用模板", initial: this.plugin.settings.quoteTemplate, defaultValue: DEFAULT_QUOTE_TEMPLATE,
+      tokens: ["{{content}}", "{{link}}", "{{#link}}{{/link}}", "|trim", "|singleline", "|blockquote"],
+      context: { content: "第一行\n第二行", link: "marginnote4app://note/example" },
+      save: value => { this.plugin.settings.quoteTemplate = value; }, quoteToggle: true,
+    });
+    const cardPanel = this.createTemplatePanel(panels, {
+      name: "卡片模板", initial: this.plugin.settings.cardTemplate, defaultValue: DEFAULT_CARD_TEMPLATE,
+      tokens: ["{{heading}}", "{{title}}", "{{title|link}}", "{{content}}", "|trim", "|singleline"],
+      context: { heading: "##", title: "示例卡片", content: "示例正文", link: "marginnote4app://note/example" },
+      save: value => { this.plugin.settings.cardTemplate = value; }, quoteToggle: false,
+    });
+    cardPanel.hidden = true;
+    const activate = (quote: boolean) => {
+      quotePanel.hidden = !quote; cardPanel.hidden = quote;
+      quoteTab.toggleClass("is-active", quote); cardTab.toggleClass("is-active", !quote);
+      quoteTab.setAttr("aria-selected", String(quote)); cardTab.setAttr("aria-selected", String(!quote));
+    };
+    quoteTab.addEventListener("click", () => activate(true));
+    cardTab.addEventListener("click", () => activate(false));
+  }
+
+  private createTemplatePanel(container: HTMLElement, config: {
+    name: string; initial: string; defaultValue: string; tokens: string[];
+    context: Parameters<typeof renderQuoteTemplate>[1]; save: (value: string) => void; quoteToggle: boolean;
+  }): HTMLElement {
+    const panel = container.createDiv({ cls: "ostracon-template-panel", attr: { role: "tabpanel" } });
+    const header = panel.createDiv({ cls: "ostracon-template-header" });
+    header.createEl("strong", { text: config.name });
+    const actions = header.createDiv({ cls: "ostracon-template-actions" });
+    const status = actions.createEl("span", { cls: "ostracon-template-status", attr: { role: "status" } });
+    if (config.quoteToggle) {
+      const toggleLabel = actions.createEl("label", { cls: "ostracon-template-toggle" });
+      toggleLabel.createSpan({ text: "同时在MN创建卡片" });
+      new ToggleComponent(toggleLabel).setValue(this.plugin.settings.createQuoteCard).onChange(async value => {
+        this.plugin.settings.createQuoteCard = value; await this.plugin.saveSettings();
+      });
+    }
+    const reset = actions.createEl("button", { text: "恢复默认", attr: { type: "button" } });
+    const tools = panel.createDiv({ cls: "ostracon-template-tools" });
+    const input = panel.createEl("textarea", { cls: "ostracon-template-editor", attr: { "aria-label": config.name, spellcheck: "false" } });
+    input.value = config.initial;
+    const previewWrap = panel.createDiv({ cls: "ostracon-template-preview-wrap" });
+    previewWrap.createEl("span", { text: "预览", cls: "ostracon-template-preview-label" });
+    const preview = previewWrap.createEl("pre", { cls: "ostracon-template-preview" });
+    const update = async () => {
+      try {
+        validateQuoteTemplate(input.value); preview.setText(renderQuoteTemplate(input.value, config.context));
+        status.setText("已保存"); status.removeClass("is-error"); config.save(input.value); await this.plugin.saveSettings();
+      } catch (error) {
+        status.setText(`错误：${error instanceof Error ? error.message : String(error)}`); status.addClass("is-error");
+      }
+    };
+    config.tokens.forEach(token => {
+      const button = tools.createEl("button", { text: token, attr: { type: "button" } });
+      button.addEventListener("click", () => { input.setRangeText(token, input.selectionStart, input.selectionEnd, "end"); input.focus(); void update(); });
+    });
     input.addEventListener("input", () => { void update(); });
-    tokens.forEach(token => { const button = tools.createEl("button", { text: token, attr: { type: "button" } }); button.addEventListener("click", () => { input.setRangeText(token, input.selectionStart, input.selectionEnd, "end"); input.focus(); void update(); }); });
+    reset.addEventListener("click", () => { input.value = config.defaultValue; input.focus(); void update(); });
     void update();
+    return panel;
   }
 }
 

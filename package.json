@@ -1,6 +1,6 @@
 {
   "name": "ostracon-ob",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "main": "main.js",
   "private": true,
   "scripts": {

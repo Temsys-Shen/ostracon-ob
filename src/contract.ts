@@ -8,6 +8,7 @@ const PROTOCOL_VERSION = 4;
 const PACKET_VERSION = 1;
 const DEFAULT_OUTPUT_FOLDER = "Marginnote";
 const DEFAULT_PORT = 27123;
+const DEFAULT_CARD_TEMPLATE = "{{heading}} {{title|link}}\n\n{{content}}";
 
 const DEFAULTS = {
   host: "::",
@@ -214,7 +215,7 @@ function createDefaultSettings(): OstraconSettings {
     autoStartServer: true,
     autoConvertBase64: true,
     quoteTemplate: DEFAULT_QUOTE_TEMPLATE,
-    cardTemplate: "{{heading}} {{title|link}}\n\n{{content}}",
+    cardTemplate: DEFAULT_CARD_TEMPLATE,
     createQuoteCard: true,
     approvedDevices: [],
   };
@@ -324,7 +325,7 @@ function fileExtensionForFormat(f?: string): ".md" | ".canvas" {
 }
 
 export {
-  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT, DEFAULT_QUOTE_TEMPLATE,
+  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT, DEFAULT_QUOTE_TEMPLATE, DEFAULT_CARD_TEMPLATE,
   nowIso, sanitizeSegment, normalizeTags, createId,
   createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath, findAvailablePacketFilePath, fileExtensionForFormat,
   buildPacketRecord, buildConnectionUrl, buildHelloPayload, buildAckPayload,
