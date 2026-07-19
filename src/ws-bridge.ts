@@ -482,6 +482,15 @@ class OstraconWsBridge {
       case "getVaultAsset":
         enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.getVaultAsset((message.payload || {}) as Record<string, unknown>) });
         break;
+      case "createVaultDocumentPdfExport":
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.createVaultDocumentPdfExport((message.payload || {}) as Record<string, unknown>) });
+        break;
+      case "readVaultDocumentPdfChunk":
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.readVaultDocumentPdfChunk((message.payload || {}) as Record<string, unknown>) });
+        break;
+      case "releaseVaultDocumentPdfExport":
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.releaseVaultDocumentPdfExport((message.payload || {}) as Record<string, unknown>) });
+        break;
       case "getQuoteContext":
         enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.getQuoteContext() });
         break;

@@ -23,6 +23,7 @@ class OstraconInboxView extends ItemView {
   isConnected = false;
 
   collapsedGroups: Set<string> = new Set();
+  expandedContentGroups: Set<string> = new Set();
   cardOrder: string[] = [];
   lastClickedIndex = -1;
   isShiftDown = false;
@@ -183,6 +184,7 @@ class OstraconInboxView extends ItemView {
       });
       btn.addEventListener("click", () => {
         this.activeTab = item.id;
+        this.expandedContentGroups.clear();
         this.render();
       });
     }
@@ -344,8 +346,21 @@ class OstraconInboxView extends ItemView {
       text: `${group.label}（${group.cards.length}）`,
     });
 
+    const isExpanded = this.expandedContentGroups.has(group.key);
+    const contentBtn = head.createSpan({
+      cls: `ostracon-group-content-btn${isExpanded ? " is-active" : ""}`,
+      text: "≡",
+      attr: { role: "button", tabindex: "0" },
+    });
+    contentBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (isExpanded) this.expandedContentGroups.delete(group.key);
+      else this.expandedContentGroups.add(group.key);
+      this.refresh();
+    });
+
     head.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).closest("input")) return;
+      if ((e.target as HTMLElement).closest("input, .ostracon-group-content-btn")) return;
       if (this.collapsedGroups.has(group.key)) {
         this.collapsedGroups.delete(group.key);
       } else {
@@ -405,6 +420,13 @@ class OstraconInboxView extends ItemView {
     }
 
     item.createSpan({ cls: "ostracon-card-title", text: card.title || "(无标题)" });
+
+    if (this.expandedContentGroups.has(group.key) && card.comment) {
+      item.createDiv({
+        cls: "ostracon-card-excerpt",
+        text: card.comment.length > 60 ? `${card.comment.slice(0, 60)}…` : card.comment,
+      });
+    }
 
     item.addEventListener("mouseenter", () => {
       if (!this.isDragging) return;

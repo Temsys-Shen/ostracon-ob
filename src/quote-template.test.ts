@@ -22,6 +22,15 @@ describe("quote template", () => {
     expect(renderQuoteTemplate(template, { content: "quote", link: "mn://note" })).toBe("quote\n[MN](mn://note)");
   });
 
+  test("renders an explicit card link variable and rejects the removed link filter", () => {
+    expect(renderQuoteTemplate("{{heading}} [{{title}}]({{link}})", {
+      content: "正文", heading: "##", title: "标题", link: "marginnote4app://note/1",
+    })).toBe("## [标题](marginnote4app://note/1)");
+    expect(() => renderQuoteTemplate("{{title|link}}", {
+      content: "正文", title: "标题", link: "marginnote4app://note/1",
+    })).toThrow("未知模板过滤器: link");
+  });
+
   test("renders the default template as one blockquote", () => {
     expect(renderQuoteTemplate(DEFAULT_QUOTE_TEMPLATE, {
       content: "first\nsecond",

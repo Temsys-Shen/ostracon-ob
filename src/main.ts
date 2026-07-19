@@ -1,9 +1,10 @@
 import { Notice, Plugin, normalizePath } from "obsidian";
 import {
-  VIEW_TYPE_INBOX, DEFAULT_OUTPUT_FOLDER, createDefaultSettings, normalizePacket,
+  VIEW_TYPE_INBOX, DEFAULT_OUTPUT_FOLDER, DEFAULT_CARD_TEMPLATE, LEGACY_DEFAULT_CARD_TEMPLATE, createDefaultSettings, normalizePacket,
   buildPacketRecord, buildConnectionUrl,
   findAvailablePacketFilePath,
   createId,
+  VAULT_INDEX_CHANGED_EVENT, QUOTE_CONTEXT_CHANGED_EVENT,
   type OstraconCardSummary, type OstraconNotebookSummary,
   type OstraconSettings, type OstraconPacket, type OstraconPacketRecord, type OstraconRecordMeta,
 } from "./contract";
@@ -20,6 +21,7 @@ import { VaultBrowserService } from "./vault-browser-service";
 import { QuoteService } from "./quote-service";
 import type { QuoteInsertRequest, QuoteInsertResult, QuoteTargetContext } from "./contract";
 import { CardDropService } from "./card-drop-service";
+import { PdfExportService } from "./pdf-export-service";
 
 interface OstraconPluginState {
   packets: OstraconPacketRecord[];
@@ -39,10 +41,12 @@ class OstraconPlugin extends Plugin {
   vaultBrowser!: VaultBrowserService;
   quoteService!: QuoteService;
   cardDropService!: CardDropService;
+  pdfExportService!: PdfExportService;
 
   async onload(): Promise<void> {
     const saved = await this.loadData() as { settings?: Partial<OstraconSettings>; packets?: OstraconPacketRecord[]; logs?: OstraconPluginState["logs"] } | null;
     this.settings = Object.assign(createDefaultSettings(), saved?.settings ?? {});
+    if (this.settings.cardTemplate === LEGACY_DEFAULT_CARD_TEMPLATE) this.settings.cardTemplate = DEFAULT_CARD_TEMPLATE;
 
     this.state = {
       packets: Array.isArray(saved?.packets) ? saved.packets : [],
@@ -54,8 +58,12 @@ class OstraconPlugin extends Plugin {
     this.quoteService = new QuoteService(this);
     this.cardDropService = new CardDropService(this);
     this.vaultBrowser = new VaultBrowserService(this.app, (revision) => {
-      if (this.bridge) this.bridge.broadcastEvent("vaultIndexChanged", { revision });
+      if (this.bridge) this.bridge.broadcastEvent(VAULT_INDEX_CHANGED_EVENT, { revision });
     });
+    this.pdfExportService = new PdfExportService(
+      async (path) => this.loadPdfSource(path),
+      () => this.settings.pdfPrint,
+    );
     this.discovery = new OstraconDiscovery(this.settings.port, this.getVaultName());
 
     this.registerEvent(this.app.vault.on("create", () => this.vaultBrowser.invalidate()));
@@ -70,6 +78,15 @@ class OstraconPlugin extends Plugin {
     this.registerDomEvent(this.app.workspace.containerEl, "dragover", (event) => {
       this.cardDropService.handleDragOver(event);
     });
+
+    // 推送引文上下文变化事件，MN 端不再需要 1.5s 轮询 getQuoteContext。
+    // active-leaf-change 覆盖切叶子（切文件/切视图模式/切到设置页），file-open 覆盖活动文件变化。
+    // 同一文件内光标移动不改变 cursor.available 状态，无需监听 CodeMirror cursorActivity。
+    const broadcastQuoteContext = () => {
+      if (this.bridge) this.bridge.broadcastEvent(QUOTE_CONTEXT_CHANGED_EVENT, this.quoteService.getContext());
+    };
+    this.registerEvent(this.app.workspace.on("active-leaf-change", broadcastQuoteContext));
+    this.registerEvent(this.app.workspace.on("file-open", broadcastQuoteContext));
 
     this.registerView(VIEW_TYPE_INBOX, (leaf) => new OstraconInboxView(leaf, this));
     this.addRibbonIcon("inbox", "获取MN数据", () => this.activateInboxView());
@@ -177,8 +194,22 @@ class OstraconPlugin extends Plugin {
   searchVaultDocuments(payload: Record<string, unknown>) { return this.vaultBrowser.search(String(payload.query || ""), payload as { cursor?: number; limit?: number }); }
   getVaultDocument(payload: Record<string, unknown>) { return this.vaultBrowser.getDocument(String(payload.path || "")); }
   getVaultAsset(payload: Record<string, unknown>) { return this.vaultBrowser.getAsset(String(payload.path || "")); }
+  createVaultDocumentPdfExport(payload: Record<string, unknown>) { return this.pdfExportService.create(String(payload.path || "")); }
+  readVaultDocumentPdfChunk(payload: Record<string, unknown>) { return this.pdfExportService.readChunk(String(payload.sessionId || ""), Number(payload.chunkIndex)); }
+  releaseVaultDocumentPdfExport(payload: Record<string, unknown>) { return this.pdfExportService.release(String(payload.sessionId || "")); }
   getQuoteContext(): QuoteTargetContext { return this.quoteService.getContext(); }
   insertQuote(payload: QuoteInsertRequest): Promise<QuoteInsertResult | null> { return this.quoteService.insert(payload); }
+
+  private async loadPdfSource(path: string) {
+    const document = await this.vaultBrowser.getDocument(path);
+    let renderedHtml = document.renderedHtml;
+    for (const asset of document.assets) {
+      const loaded = await this.vaultBrowser.getAsset(asset.path);
+      const dataUrl = `data:${loaded.mime};base64,${loaded.base64}`;
+      renderedHtml = renderedHtml.split(`ostracon-asset://${encodeURIComponent(asset.path)}`).join(dataUrl);
+    }
+    return { path: document.path, title: document.title, renderedHtml };
+  }
 
   getServerStatusText(): string {
     return this.bridge?.isRunning ? "Ostracon: 已启动" : "Ostracon: 已停止";

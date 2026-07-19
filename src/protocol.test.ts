@@ -52,6 +52,9 @@ function createHost() {
     searchVaultDocuments: vi.fn().mockResolvedValue({ documents: [] }),
     getVaultDocument: vi.fn().mockResolvedValue({ path: "Note.md" }),
     getVaultAsset: vi.fn().mockResolvedValue({ data: "" }),
+    createVaultDocumentPdfExport: vi.fn().mockResolvedValue({ sessionId: "pdf-1" }),
+    readVaultDocumentPdfChunk: vi.fn().mockReturnValue({ chunkIndex: 0, base64Chunk: "JVBERg==" }),
+    releaseVaultDocumentPdfExport: vi.fn().mockReturnValue({ released: true }),
   } as unknown as BridgeHost;
 }
 
@@ -106,6 +109,40 @@ describe("Ostracon protocol", () => {
     }, frame => frames.push(frame as Record<string, unknown>));
 
     expect(frames.at(-1)).toMatchObject({ type: "command_result", payload: { vaultName: "Vault" } });
+  });
+
+  test("routes PDF export session commands through the OB service", async () => {
+    const host = createHost();
+    const bridge = new OstraconWsBridge(host);
+    const frames: Array<Record<string, unknown>> = [];
+
+    await bridge.handleCommand({} as never, {
+      type: "command",
+      command: "createVaultDocumentPdfExport",
+      requestId: "pdf-create",
+      payload: { path: "Notes/Lesson.md" },
+    }, frame => frames.push(frame as Record<string, unknown>));
+    await bridge.handleCommand({} as never, {
+      type: "command",
+      command: "readVaultDocumentPdfChunk",
+      requestId: "pdf-read",
+      payload: { sessionId: "pdf-1", chunkIndex: 0 },
+    }, frame => frames.push(frame as Record<string, unknown>));
+    await bridge.handleCommand({} as never, {
+      type: "command",
+      command: "releaseVaultDocumentPdfExport",
+      requestId: "pdf-release",
+      payload: { sessionId: "pdf-1" },
+    }, frame => frames.push(frame as Record<string, unknown>));
+
+    expect(host.createVaultDocumentPdfExport).toHaveBeenCalledWith({ path: "Notes/Lesson.md" });
+    expect(host.readVaultDocumentPdfChunk).toHaveBeenCalledWith({ sessionId: "pdf-1", chunkIndex: 0 });
+    expect(host.releaseVaultDocumentPdfExport).toHaveBeenCalledWith({ sessionId: "pdf-1" });
+    expect(frames.filter(frame => frame.type === "command_result").map(frame => frame.requestId)).toEqual([
+      "pdf-create",
+      "pdf-read",
+      "pdf-release",
+    ]);
   });
 
   test("routes quote insertion through command_result", async () => {

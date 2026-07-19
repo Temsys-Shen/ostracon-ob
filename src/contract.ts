@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { normalizePath } from "obsidian";
 import { DEFAULT_QUOTE_TEMPLATE } from "./quote-template";
+import { createDefaultPdfPrintSettings, type PdfPrintSettings } from "./pdf-print-settings";
 
 const PLUGIN_ID = "ostracon-ob";
 const VIEW_TYPE_INBOX = "ostracon-inbox-view";
@@ -8,7 +9,12 @@ const PROTOCOL_VERSION = 4;
 const PACKET_VERSION = 1;
 const DEFAULT_OUTPUT_FOLDER = "Marginnote";
 const DEFAULT_PORT = 27123;
-const DEFAULT_CARD_TEMPLATE = "{{heading}} {{title|link}}\n\n{{content}}";
+const LEGACY_DEFAULT_CARD_TEMPLATE = "{{heading}} {{title|link}}\n\n{{content}}";
+const DEFAULT_CARD_TEMPLATE = "{{heading}} [{{title}}]({{link}})\n\n{{content}}";
+
+// 广播事件名。与 ostracon-mn/web/src/lib/events.js 保持一致（人工同步）。
+const VAULT_INDEX_CHANGED_EVENT = "vaultIndexChanged";
+const QUOTE_CONTEXT_CHANGED_EVENT = "ostracon:quote-context-changed";
 
 const DEFAULTS = {
   host: "::",
@@ -27,6 +33,7 @@ interface OstraconSettings {
   cardTemplate: string;
   createQuoteCard: boolean;
   approvedDevices: Array<{ clientId: string; name: string; approvedAt: string }>;
+  pdfPrint: PdfPrintSettings;
 }
 
 interface OstraconSource {
@@ -162,6 +169,9 @@ export interface BridgeHost {
   searchVaultDocuments: (payload: Record<string, unknown>) => Promise<unknown>;
   getVaultDocument: (payload: Record<string, unknown>) => Promise<unknown>;
   getVaultAsset: (payload: Record<string, unknown>) => Promise<unknown>;
+  createVaultDocumentPdfExport: (payload: Record<string, unknown>) => Promise<unknown>;
+  readVaultDocumentPdfChunk: (payload: Record<string, unknown>) => unknown;
+  releaseVaultDocumentPdfExport: (payload: Record<string, unknown>) => unknown;
   getQuoteContext: () => QuoteTargetContext;
   insertQuote: (payload: QuoteInsertRequest) => Promise<QuoteInsertResult | null>;
 }
@@ -218,6 +228,7 @@ function createDefaultSettings(): OstraconSettings {
     cardTemplate: DEFAULT_CARD_TEMPLATE,
     createQuoteCard: true,
     approvedDevices: [],
+    pdfPrint: createDefaultPdfPrintSettings(),
   };
 }
 
@@ -325,7 +336,8 @@ function fileExtensionForFormat(f?: string): ".md" | ".canvas" {
 }
 
 export {
-  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT, DEFAULT_QUOTE_TEMPLATE, DEFAULT_CARD_TEMPLATE,
+  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT, DEFAULT_QUOTE_TEMPLATE, LEGACY_DEFAULT_CARD_TEMPLATE, DEFAULT_CARD_TEMPLATE,
+  VAULT_INDEX_CHANGED_EVENT, QUOTE_CONTEXT_CHANGED_EVENT,
   nowIso, sanitizeSegment, normalizeTags, createId,
   createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath, findAvailablePacketFilePath, fileExtensionForFormat,
   buildPacketRecord, buildConnectionUrl, buildHelloPayload, buildAckPayload,

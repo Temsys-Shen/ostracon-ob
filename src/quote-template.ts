@@ -31,7 +31,6 @@ function renderVariable(expression: string, context: QuoteTemplateContext): stri
   for (const filterName of parts) {
     const filter = FILTERS[filterName];
     if (filter) value = filter(value);
-    else if (filterName === "link" && variable === "title") value = context.link ? `[${value.replace(/[[\]\\]/g, "\\$&")}](${context.link})` : value;
     else throw new Error(`未知模板过滤器: ${filterName}`);
   }
   return value;

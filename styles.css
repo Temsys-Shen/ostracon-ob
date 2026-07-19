@@ -143,6 +143,25 @@
   white-space: nowrap;
 }
 
+.ostracon-group-content-btn {
+  padding: 1px 3px;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  opacity: .4;
+  flex-shrink: 0;
+  line-height: 1;
+  user-select: none;
+  transition: opacity 120ms;
+}
+.ostracon-group-content-btn:hover,
+.ostracon-group-content-btn.is-active {
+  opacity: 1;
+  color: var(--text-normal);
+}
+
 /* ── Card Item ── */
 
 .ostracon-card-item {
@@ -187,6 +206,17 @@
   flex: 1;
   min-width: 0;
   color: var(--text-normal);
+}
+
+.ostracon-card-excerpt {
+  width: 100%;
+  padding: 2px 0 0 22px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── Action bar ── */
@@ -407,19 +437,166 @@
 .ostracon-context-item:hover {
   background: var(--background-modifier-hover);
 }
-.ostracon-settings-section {
-  margin: 10px 0;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
-  background: var(--background-primary);
+.ostracon-settings {
+  container-type: inline-size;
+  max-width: none;
 }
-.ostracon-settings-section > summary {
-  padding: 10px 12px;
+.ostracon-settings-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 24px;
+  padding: 0 0 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--background-modifier-border);
+  scrollbar-width: thin;
+}
+.ostracon-settings-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 82px;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 5px;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.ostracon-settings-tabs button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.ostracon-settings-tabs button.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.ostracon-settings-tab-info {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  opacity: .72;
+}
+.ostracon-settings-tab-info svg { width: 15px; height: 15px; }
+.ostracon-settings-tabs button:hover .ostracon-settings-tab-info { opacity: 1; }
+.ostracon-settings-tabs button:focus-visible,
+.ostracon-settings-segmented button:focus-visible,
+.ostracon-settings-footer button:focus-visible,
+.ostracon-settings-advanced > summary:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+.ostracon-settings-panel { position: relative; }
+.ostracon-settings-panel[hidden] { display: none; }
+.ostracon-settings-panel-header {
+  position: absolute;
+  top: -18px;
+  right: 0;
+  pointer-events: none;
+}
+.ostracon-settings-save-status {
+  min-width: 42px;
+  color: var(--text-success);
+  font-size: var(--font-ui-smaller);
+  text-align: right;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.ostracon-settings-save-status.is-visible { opacity: 1; }
+.ostracon-settings-group { margin: 0 0 28px; }
+.ostracon-settings-group > h3 {
+  margin: 0;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+}
+.ostracon-settings-rows > .setting-item,
+.ostracon-settings-advanced .setting-item {
+  display: grid;
+  grid-template-columns: minmax(180px, .8fr) minmax(260px, 1.2fr);
+  gap: 20px;
+  align-items: center;
+  padding: 12px 14px;
+  border-top: 0;
+  border-bottom: 1px solid var(--background-modifier-border-hover);
+}
+.ostracon-settings .setting-item-info,
+.ostracon-settings .setting-item-control { min-width: 0; }
+.ostracon-settings .setting-item-control {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.ostracon-settings .setting-item-control > input[type="text"],
+.ostracon-settings .setting-item-control > input[type="number"],
+.ostracon-settings .setting-item-control > select { width: min(100%, 280px); }
+.ostracon-settings-segmented {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  min-width: 190px;
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+}
+.ostracon-settings-segmented button {
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 4px;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+}
+.ostracon-settings-segmented button.is-active {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .16);
+}
+.ostracon-settings-number { display: inline-flex; align-items: center; gap: 8px; color: var(--text-muted); }
+.ostracon-settings-number input { width: 112px; text-align: right; }
+.ostracon-paper-control,
+.ostracon-margin-control { flex-wrap: wrap; }
+.ostracon-settings .ostracon-paper-control > select,
+.ostracon-settings .ostracon-margin-control > select { width: 96px; }
+.ostracon-paper-dimensions,
+.ostracon-margin-values { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.ostracon-paper-dimensions input { width: 76px; text-align: right; }
+.ostracon-margin-values label { display: inline-flex; align-items: center; gap: 3px; font-size: var(--font-ui-smaller); }
+.ostracon-margin-values input { width: 54px; text-align: right; }
+.ostracon-margin-unit { margin-left: 1px; }
+.ostracon-settings-field-error {
+  grid-column: 2;
+  min-height: 0;
+  margin: -8px 0 0;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+  text-align: right;
+}
+.ostracon-settings-field-error:empty { display: none; }
+.ostracon-settings .setting-item.has-error input { border-color: var(--text-error); }
+.ostracon-settings-config-error {
+  margin: -8px 0 20px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--text-error);
+  background: var(--background-secondary);
+  color: var(--text-error);
+  font-size: var(--font-ui-small);
+}
+.ostracon-settings-advanced { margin: 4px 0 24px; border-bottom: 1px solid var(--background-modifier-border); }
+.ostracon-settings-advanced > summary {
+  padding: 10px 0;
   color: var(--text-normal);
   font-weight: 600;
   cursor: pointer;
 }
-.ostracon-settings-section-content { padding: 0 12px 8px; }
+.ostracon-settings-advanced .ostracon-settings-rows { padding-bottom: 8px; }
+.ostracon-settings-footer { display: flex; justify-content: flex-end; padding: 8px 0 4px; }
+.ostracon-settings-footer button { color: var(--text-muted); }
 .ostracon-settings-empty { color: var(--text-muted); font-size: var(--font-ui-smaller); }
 .ostracon-template-tabs {
   display: inline-flex;
@@ -524,6 +701,25 @@
 @media (max-width: 700px) {
   .ostracon-template-header { align-items: flex-start; flex-direction: column; }
   .ostracon-template-actions { justify-content: flex-start; }
+}
+@container (max-width: 620px) {
+  .ostracon-settings-tabs { margin-bottom: 18px; }
+  .ostracon-settings-tabs button { min-width: 76px; }
+  .ostracon-settings-rows > .setting-item,
+  .ostracon-settings-advanced .setting-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    align-items: stretch;
+  }
+  .ostracon-settings .setting-item-control { justify-content: flex-start; }
+  .ostracon-settings .setting-item-control > input[type="text"],
+  .ostracon-settings .setting-item-control > input[type="number"],
+  .ostracon-settings .setting-item-control > select { width: 100%; }
+  .ostracon-settings-field-error { grid-column: 1; margin-top: 0; text-align: left; }
+  .ostracon-settings-segmented { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ostracon-settings-save-status { transition: none; }
 }
 .ostracon-html-render-source {
   position: fixed;
