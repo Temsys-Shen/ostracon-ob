@@ -102,10 +102,9 @@ class OstraconInboxView extends ItemView {
       return;
     }
 
-    this.renderStatus();
+    this.renderActionBar();
     this.renderTabs();
     this.cardAreaEl = contentEl.createDiv({ cls: "ostracon-card-area" });
-    this.renderActionBar();
     this.updateCardAreaContent();
     this.restoreSearchFocus();
   }
@@ -158,15 +157,6 @@ class OstraconInboxView extends ItemView {
     if (countEl) countEl.textContent = `已选中 ${this.selectedCardIds.size} 张`;
     const btn = this.contentEl.querySelector(".ostracon-import-btn");
     if (btn instanceof HTMLButtonElement) btn.disabled = this.selectedCardIds.size === 0;
-  }
-
-  renderStatus(): void {
-    const { contentEl } = this;
-    const row = contentEl.createDiv({ cls: "ostracon-status-row" });
-    row.createSpan({ cls: "ostracon-status-dot on" });
-    row.createSpan({ cls: "ostracon-status-label", text: "MN 在线" });
-    const btn = row.createSpan({ cls: "ostracon-settings-btn", text: "设置", attr: { role: "button", tabindex: "0" } });
-    btn.addEventListener("click", () => this.plugin.openSettings());
   }
 
   renderTabs(): void {

@@ -15,40 +15,6 @@
   padding-bottom: 0;
 }
 
-/* ── Status ── */
-
-.ostracon-status-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.ostracon-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 99px;
-  flex-shrink: 0;
-}
-.ostracon-status-dot.on { background: var(--color-green); }
-
-.ostracon-status-label {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.ostracon-settings-btn {
-  margin-left: auto;
-  padding: 0;
-  font-size: 11px;
-  color: var(--text-muted);
-  background: none;
-  cursor: pointer;
-  user-select: none;
-}
-.ostracon-settings-btn:hover { color: var(--text-normal); }
-
 /* ── Tabs ── */
 
 .ostracon-tabs {
@@ -226,9 +192,8 @@
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--background-modifier-border);
-  margin-top: 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--background-modifier-border);
 }
 
 .ostracon-count {
