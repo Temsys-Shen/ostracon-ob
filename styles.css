@@ -491,6 +491,15 @@
 }
 .ostracon-settings .setting-item-info,
 .ostracon-settings .setting-item-control { min-width: 0; }
+.ostracon-settings-rows > .ostracon-connection-address {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.ostracon-settings .ostracon-connection-address .setting-item-description {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .ostracon-settings .setting-item-control {
   display: flex;
   justify-content: flex-end;

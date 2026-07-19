@@ -152,6 +152,7 @@ export interface SettingsHost {
   saveSettings: () => Promise<void>;
   restartServer: () => Promise<void>;
   getConnectionUrl: () => string;
+  resolveConnectionUrl: () => Promise<string>;
 }
 
 export interface BridgeHost {

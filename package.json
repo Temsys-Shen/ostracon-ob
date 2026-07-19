@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs production",
-    "package": "npm run build && node scripts/package-plugin.mjs",
+    "push": "pnpm build && node scripts/deploy-plugin.mjs",
     "lint": "eslint .",
     "test": "vitest run"
   },

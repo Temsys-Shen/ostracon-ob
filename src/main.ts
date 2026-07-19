@@ -22,6 +22,7 @@ import { QuoteService } from "./quote-service";
 import type { QuoteInsertRequest, QuoteInsertResult, QuoteTargetContext } from "./contract";
 import { CardDropService } from "./card-drop-service";
 import { PdfExportService } from "./pdf-export-service";
+import { resolveConnectionUrl } from "./connection-address";
 
 interface OstraconPluginState {
   packets: OstraconPacketRecord[];
@@ -205,6 +206,10 @@ class OstraconPlugin extends Plugin {
 
   getConnectionUrl(): string {
     return buildConnectionUrl(this.settings);
+  }
+
+  resolveConnectionUrl(): Promise<string> {
+    return resolveConnectionUrl(this.settings.port);
   }
 
   isServerRunning(): boolean {

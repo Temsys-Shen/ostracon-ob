@@ -184,14 +184,38 @@ class OstraconSettingTab extends PluginSettingTab {
         const port = Number(text.getValue());
         if (!Number.isInteger(port) || port <= 0 || port > 65535) { new Notice("端口必须是1到65535之间的整数"); return; }
         this.plugin.settings.port = port;
-        this.run(async () => { await this.save(status); await this.plugin.restartServer(); }, "更新端口");
+        this.run(async () => { await this.save(status); await this.plugin.restartServer(); this.display(); }, "更新端口");
       });
     });
     new Setting(connection).setName("自动启动").setDesc("打开Obsidian时启动连接服务").addToggle(toggle => {
       toggle.setValue(this.plugin.settings.autoStartServer).onChange(value => { this.plugin.settings.autoStartServer = value; this.run(async () => { await this.save(status); await this.plugin.restartServer(); }, "更新自动启动"); });
     });
-    new Setting(connection).setName("连接地址").setDesc(this.plugin.getConnectionUrl()).addButton(button => {
-      button.setButtonText("复制").onClick(() => { this.run(async () => { await navigator.clipboard.writeText(this.plugin.getConnectionUrl()); new Notice("已复制连接地址"); }, "复制连接地址"); });
+    const connectionAddress = new Setting(connection).setName("连接地址").setDesc("获取中");
+    connectionAddress.settingEl.addClass("ostracon-connection-address");
+    const refreshConnectionAddress = async () => {
+      try {
+        const url = await this.plugin.resolveConnectionUrl();
+        connectionAddress.setDesc(url);
+        return url;
+      } catch (error) {
+        connectionAddress.setDesc("获取失败");
+        throw error;
+      }
+    };
+    this.run(async () => { await refreshConnectionAddress(); }, "获取连接地址");
+    connectionAddress.addButton(button => {
+      button.setButtonText("复制").onClick(() => {
+        this.run(async () => {
+          button.setDisabled(true);
+          try {
+            const url = await refreshConnectionAddress();
+            await navigator.clipboard.writeText(url);
+            new Notice("已复制连接地址");
+          } finally {
+            button.setDisabled(false);
+          }
+        }, "复制连接地址");
+      });
     });
 
     const storage = this.createGroup(container, "导入与存储");
@@ -244,7 +268,6 @@ class OstraconSettingTab extends PluginSettingTab {
           this.run(() => this.save(status), "保存纸张设置");
         });
     });
-    paper.controlEl.prepend(paperDropdown.selectEl);
     const bindDimension = (input: HTMLInputElement, dimension: "width" | "height") => {
       input.addEventListener("input", () => { if (Number(input.value) > 1000) input.value = "1000"; });
       const submit = async () => {

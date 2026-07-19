@@ -8,5 +8,5 @@ export default defineConfig({
       obsidian: path.resolve(__dirname, "src/test/obsidian-runtime.ts"),
     },
   },
-  test: { environment: "node", include: ["src/**/*.test.ts"] },
+  test: { environment: "node", include: ["src/**/*.test.ts", "scripts/**/*.test.mjs"] },
 });
