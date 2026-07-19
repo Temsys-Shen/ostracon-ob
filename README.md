@@ -14,7 +14,7 @@ Ostracon OB连接Obsidian与MarginNote，可将MarginNote卡片导入Obsidian、
 
 ## 系统要求
 
-- Obsidian桌面版`1.13.0`或更高版本
+- Obsidian桌面版`1.7.2`或更高版本
 - macOS版MarginNote及配套的[Ostracon MN插件](https://github.com/Temsys-Shen/ostracon-mn)
 
 本插件依赖Obsidian桌面版提供的Electron和Node.js能力，不支持Obsidian移动版。
