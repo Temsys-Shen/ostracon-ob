@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 
 export default [
   {
-    ignores: ["main.js", "node_modules/**"],
+    ignores: ["**/main.js", "dist/**", "node_modules/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -27,6 +27,7 @@ export default [
     rules: {
       "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
       "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-require-imports": "off",
     },
   },
 ];
