@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -47,8 +49,16 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build and package
-        run: npm run package
+      - name: Build
+        run: npm run build
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
 
       - name: Create GitHub release
         env:
@@ -59,7 +69,6 @@ jobs:
             main.js \
             manifest.json \
             styles.css \
-            "dist/ostracon-ob-$RELEASE_TAG.zip" \
             --verify-tag \
             --title "$RELEASE_TAG" \
             --generate-notes

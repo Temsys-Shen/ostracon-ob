@@ -21,7 +21,7 @@ function isMarkdownFile(value: unknown): value is TFile {
 function normalizeQuoteSelection(value: unknown): QuoteSelection | null {
   if (value === null) return null;
   if (!value || typeof value !== "object") throw new Error("MN返回的引文格式不正确");
-  const selection = value as QuoteSelection;
+  const selection = Object.fromEntries(Object.entries(value));
   const link = selection.link === null ? null : String(selection.link || "");
   const noteId = selection.noteId === null ? null : String(selection.noteId || "");
 
@@ -29,8 +29,9 @@ function normalizeQuoteSelection(value: unknown): QuoteSelection | null {
     return { kind: "text", text: selection.text, image: null, noteId, link };
   }
   if (
-    selection.kind === "image" && selection.text === null && selection.image &&
-    selection.image.mime === "image/png" && typeof selection.image.base64 === "string" && selection.image.base64
+    selection.kind === "image" && selection.text === null && selection.image && typeof selection.image === "object" &&
+    "mime" in selection.image && selection.image.mime === "image/png" && "base64" in selection.image &&
+    typeof selection.image.base64 === "string" && selection.image.base64
   ) {
     return { kind: "image", text: null, image: { mime: "image/png", base64: selection.image.base64 }, noteId, link };
   }
@@ -89,7 +90,7 @@ class QuoteService {
       return isMarkdownFile(file) ? { file, editor: null } : null;
     }
 
-    throw new Error(`不支持的引文目标: ${String((request as { target?: unknown }).target || "")}`);
+    throw new Error(`不支持的引文目标: ${String(request.target || "")}`);
   }
 
   private async requestSelection(): Promise<QuoteSelection | null> {

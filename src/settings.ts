@@ -1,8 +1,8 @@
-import { App, DropdownComponent, Plugin, PluginSettingTab, Setting, Notice, ToggleComponent, normalizePath, setIcon, setTooltip } from "obsidian";
+import { App, DropdownComponent, Plugin, PluginSettingTab, Setting, Notice, ToggleComponent, normalizePath, setIcon, setTooltip, type SettingDefinitionItem } from "obsidian";
 import { DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_QUOTE_TEMPLATE, DEFAULT_CARD_TEMPLATE, type SettingsHost } from "./contract";
 import {
   MAX_PRINT_MEDIA_HEIGHT_PX, applyCustomMargin, applyCustomPaperDimension, applyMarginPreset, applyPaperSize, createDefaultPdfPrintSettings,
-  validatePdfPrintSettings, type PdfMarginPreset, type PdfPaperSize,
+  isPdfMarginPreset, isPdfPaperSize, validatePdfPrintSettings,
 } from "./pdf-print-settings";
 import { renderQuoteTemplate, validateQuoteTemplate } from "./quote-template";
 import { resolveSettingsTabIndex } from "./settings-ui-logic";
@@ -16,9 +16,25 @@ class OstraconSettingTab extends PluginSettingTab {
 
   constructor(app: App, plugin: SettingsHost & Plugin) { super(app, plugin); this.plugin = plugin; }
 
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [{
+      name: "Ostracon设置",
+      desc: "MarginNote连接、文档导出、模板和设备",
+      aliases: ["常规", "主机", "端口", "自动启动", "导出目录", "Base64", "PDF", "文档导出", "纸张", "方向", "页边距", "缩放", "页眉页脚", "模板", "设备"],
+      render: setting => {
+        setting.settingEl.empty();
+        this.renderLayout(setting.settingEl);
+      },
+    }];
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    this.renderLayout(containerEl);
+  }
+
+  private renderLayout(containerEl: HTMLElement): void {
     containerEl.addClass("ostracon-settings");
 
     const tabs = containerEl.createDiv({ cls: "ostracon-settings-tabs", attr: { role: "tablist" } });
@@ -93,6 +109,12 @@ class OstraconSettingTab extends PluginSettingTab {
     this.saveStatusTimer = window.setTimeout(() => status.removeClass("is-visible"), 1400);
   }
 
+  private run(action: () => Promise<void>, context: string): void {
+    void action().catch(error => {
+      new Notice(`${context}失败: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
   private addReset(container: HTMLElement, action: () => Promise<void>): void {
     const footer = container.createDiv({ cls: "ostracon-settings-footer" });
     const button = footer.createEl("button", { text: "恢复默认值", attr: { type: "button" } });
@@ -106,7 +128,7 @@ class OstraconSettingTab extends PluginSettingTab {
         return;
       }
       window.clearTimeout(timer);
-      void action();
+      this.run(action, "恢复默认值");
     });
   }
 
@@ -119,7 +141,7 @@ class OstraconSettingTab extends PluginSettingTab {
         group.querySelectorAll("button").forEach(item => { item.removeClass("is-active"); item.setAttr("aria-pressed", "false"); });
         button.addClass("is-active");
         button.setAttr("aria-pressed", "true");
-        void onChange(option.value);
+        this.run(() => onChange(option.value), "保存设置");
       });
     });
   }
@@ -142,7 +164,7 @@ class OstraconSettingTab extends PluginSettingTab {
       }
       error.empty();
       setting.settingEl.removeClass("has-error");
-      void commit(next);
+      this.run(() => commit(next), "保存设置");
     };
     input.addEventListener("blur", submit);
     input.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); submit(); } });
@@ -153,30 +175,31 @@ class OstraconSettingTab extends PluginSettingTab {
     const status = this.createPanelHeader(container);
     const connection = this.createGroup(container, "连接");
     new Setting(connection).setName("主机").setDesc("监听地址").addText(text => {
-      text.setValue(this.plugin.settings.host).onChange(async value => { this.plugin.settings.host = value.trim() || DEFAULTS.host; await this.save(status); });
+      text.setValue(this.plugin.settings.host).onChange(value => { this.plugin.settings.host = value.trim() || DEFAULTS.host; this.run(() => this.save(status), "保存主机"); });
     });
     new Setting(connection).setName("端口").setDesc("MN连接端口").addText(text => {
       text.inputEl.type = "number";
       text.setValue(String(this.plugin.settings.port));
-      text.inputEl.addEventListener("change", async () => {
+      text.inputEl.addEventListener("change", () => {
         const port = Number(text.getValue());
         if (!Number.isInteger(port) || port <= 0 || port > 65535) { new Notice("端口必须是1到65535之间的整数"); return; }
-        this.plugin.settings.port = port; await this.save(status); await this.plugin.restartServer();
+        this.plugin.settings.port = port;
+        this.run(async () => { await this.save(status); await this.plugin.restartServer(); }, "更新端口");
       });
     });
     new Setting(connection).setName("自动启动").setDesc("打开Obsidian时启动连接服务").addToggle(toggle => {
-      toggle.setValue(this.plugin.settings.autoStartServer).onChange(async value => { this.plugin.settings.autoStartServer = value; await this.save(status); await this.plugin.restartServer(); });
+      toggle.setValue(this.plugin.settings.autoStartServer).onChange(value => { this.plugin.settings.autoStartServer = value; this.run(async () => { await this.save(status); await this.plugin.restartServer(); }, "更新自动启动"); });
     });
     new Setting(connection).setName("连接地址").setDesc(this.plugin.getConnectionUrl()).addButton(button => {
-      button.setButtonText("复制").onClick(async () => { await navigator.clipboard.writeText(this.plugin.getConnectionUrl()); new Notice("已复制连接地址"); });
+      button.setButtonText("复制").onClick(() => { this.run(async () => { await navigator.clipboard.writeText(this.plugin.getConnectionUrl()); new Notice("已复制连接地址"); }, "复制连接地址"); });
     });
 
     const storage = this.createGroup(container, "导入与存储");
     new Setting(storage).setName("导出目录").setDesc("主动推送文件的写入位置").addText(text => {
-      text.setValue(this.plugin.settings.outputFolder).onChange(async value => { this.plugin.settings.outputFolder = normalizePath(value.trim() || DEFAULT_OUTPUT_FOLDER); await this.save(status); });
+      text.setValue(this.plugin.settings.outputFolder).onChange(value => { this.plugin.settings.outputFolder = normalizePath(value.trim() || DEFAULT_OUTPUT_FOLDER); this.run(() => this.save(status), "保存导出目录"); });
     });
     new Setting(storage).setName("Base64自动转图片").setDesc("导入时保存为本地图片").addToggle(toggle => {
-      toggle.setValue(this.plugin.settings.autoConvertBase64).onChange(async value => { this.plugin.settings.autoConvertBase64 = value; await this.save(status); });
+      toggle.setValue(this.plugin.settings.autoConvertBase64).onChange(value => { this.plugin.settings.autoConvertBase64 = value; this.run(() => this.save(status), "保存Base64设置"); });
     });
     this.addReset(container, async () => {
       this.plugin.settings.host = DEFAULTS.host;
@@ -212,12 +235,13 @@ class OstraconSettingTab extends PluginSettingTab {
       dropdown
         .addOptions({ A4: "A4", A3: "A3", Letter: "Letter", Legal: "Legal", custom: "自定义" })
         .setValue(settings.paperSize)
-        .onChange(async value => {
-          applyPaperSize(settings, value as PdfPaperSize);
+        .onChange(value => {
+          if (!isPdfPaperSize(value)) throw new Error(`无效纸张类型: ${value}`);
+          applyPaperSize(settings, value);
           widthInput.value = String(settings.customPageWidthMm);
           heightInput.value = String(settings.customPageHeightMm);
           paperError.empty(); paper.settingEl.removeClass("has-error");
-          await this.save(status);
+          this.run(() => this.save(status), "保存纸张设置");
         });
     });
     paper.controlEl.prepend(paperDropdown.selectEl);
@@ -233,8 +257,8 @@ class OstraconSettingTab extends PluginSettingTab {
         paperError.empty(); paper.settingEl.removeClass("has-error");
         await this.save(status);
       };
-      input.addEventListener("blur", () => { void submit(); });
-      input.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); void submit(); } });
+      input.addEventListener("blur", () => { this.run(submit, "保存纸张尺寸"); });
+      input.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); this.run(submit, "保存纸张尺寸"); } });
     };
     bindDimension(widthInput, "width");
     bindDimension(heightInput, "height");
@@ -262,11 +286,12 @@ class OstraconSettingTab extends PluginSettingTab {
       dropdown
         .addOptions({ narrow: "窄", standard: "标准", wide: "宽", custom: "自定义" })
         .setValue(settings.marginPreset)
-        .onChange(async value => {
-          applyMarginPreset(settings, value as PdfMarginPreset);
+        .onChange(value => {
+          if (!isPdfMarginPreset(value)) throw new Error(`无效页边距类型: ${value}`);
+          applyMarginPreset(settings, value);
           marginInputs.forEach((input, side) => { input.value = String(settings.marginsMm[side]); });
           marginError.empty(); margin.settingEl.removeClass("has-error");
-          await this.save(status);
+          this.run(() => this.save(status), "保存页边距");
         });
     });
     margin.controlEl.prepend(marginDropdown.selectEl);
@@ -282,18 +307,24 @@ class OstraconSettingTab extends PluginSettingTab {
         marginError.empty(); margin.settingEl.removeClass("has-error");
         await this.save(status);
       };
-      input.addEventListener("blur", () => { void submit(); });
-      input.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); void submit(); } });
+      input.addEventListener("blur", () => { this.run(submit, "保存页边距"); });
+      input.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); this.run(submit, "保存页边距"); } });
     });
 
     const content = this.createGroup(container, "内容");
     new Setting(content).setName("缩放").addSlider(slider => {
-      slider.setLimits(0.5, 2, 0.05).setValue(settings.scale).setDynamicTooltip();
-      slider.onChange(async value => { settings.scale = value; await this.save(status); });
+      const valueLabel = slider.sliderEl.parentElement?.createSpan({ text: `${Math.round(settings.scale * 100)}%`, cls: "ostracon-settings-slider-value" });
+      slider.setLimits(0.5, 2, 0.05).setValue(settings.scale);
+      slider.onChange(value => {
+        settings.scale = value;
+        valueLabel?.setText(`${Math.round(value * 100)}%`);
+        slider.sliderEl.setAttr("aria-valuetext", `${Math.round(value * 100)}%`);
+        this.run(() => this.save(status), "保存缩放");
+      });
       slider.sliderEl.setAttr("aria-valuetext", `${Math.round(settings.scale * 100)}%`);
     });
     new Setting(content).setName("打印背景").addToggle(toggle => {
-      toggle.setValue(settings.printBackground).onChange(async value => { settings.printBackground = value; await this.save(status); });
+      toggle.setValue(settings.printBackground).onChange(value => { settings.printBackground = value; this.run(() => this.save(status), "保存打印背景"); });
     });
     const mediaHeight = new Setting(content).setName("媒体最大高度");
     this.addValidatedNumber(mediaHeight, settings.mediaMaxHeightPx, "px", 1, MAX_PRINT_MEDIA_HEIGHT_PX, async value => { settings.mediaMaxHeightPx = Math.round(value); await this.save(status); });
@@ -303,16 +334,16 @@ class OstraconSettingTab extends PluginSettingTab {
     const advancedRows = advanced.createDiv({ cls: "ostracon-settings-rows" });
     const headerRow = new Setting(advancedRows).setName("页眉页脚");
     const templateRows: HTMLElement[] = [];
-    headerRow.addToggle(toggle => toggle.setValue(settings.displayHeaderFooter).onChange(async value => {
-      settings.displayHeaderFooter = value; templateRows.forEach(row => row.hidden = !value); await this.save(status);
+    headerRow.addToggle(toggle => toggle.setValue(settings.displayHeaderFooter).onChange(value => {
+      settings.displayHeaderFooter = value; templateRows.forEach(row => row.hidden = !value); this.run(() => this.save(status), "保存页眉页脚");
     }));
     const templateDesc = "可用变量：{{title}} {{date}} {{page}} {{pages}}";
-    const headerTemplate = new Setting(advancedRows).setName("页眉").setDesc(templateDesc).addText(text => text.setValue(settings.headerTemplate).onChange(async value => { settings.headerTemplate = value; await this.save(status); }));
-    const footerTemplate = new Setting(advancedRows).setName("页脚").setDesc(templateDesc).addText(text => text.setValue(settings.footerTemplate).onChange(async value => { settings.footerTemplate = value; await this.save(status); }));
+    const headerTemplate = new Setting(advancedRows).setName("页眉").setDesc(templateDesc).addText(text => text.setValue(settings.headerTemplate).onChange(value => { settings.headerTemplate = value; this.run(() => this.save(status), "保存页眉"); }));
+    const footerTemplate = new Setting(advancedRows).setName("页脚").setDesc(templateDesc).addText(text => text.setValue(settings.footerTemplate).onChange(value => { settings.footerTemplate = value; this.run(() => this.save(status), "保存页脚"); }));
     templateRows.push(headerTemplate.settingEl, footerTemplate.settingEl);
     templateRows.forEach(row => row.hidden = !settings.displayHeaderFooter);
     new Setting(advancedRows).setName("优先使用CSS页面尺寸").addToggle(toggle => {
-      toggle.setValue(settings.preferCssPageSize).onChange(async value => { settings.preferCssPageSize = value; await this.save(status); });
+      toggle.setValue(settings.preferCssPageSize).onChange(value => { settings.preferCssPageSize = value; this.run(() => this.save(status), "保存CSS页面尺寸"); });
     });
 
     this.addReset(container, async () => {
@@ -340,7 +371,7 @@ class OstraconSettingTab extends PluginSettingTab {
     const approved = this.plugin.settings.approvedDevices || [];
     if (approved.length === 0) rows.createEl("p", { text: "暂无已批准设备", cls: "ostracon-settings-empty" });
     approved.forEach(device => new Setting(rows).setName(device.name || device.clientId).setDesc(new Date(device.approvedAt).toLocaleString()).addButton(button => {
-      button.setButtonText("移除").onClick(async () => { this.plugin.settings.approvedDevices = approved.filter(item => item.clientId !== device.clientId); await this.plugin.saveSettings(); this.display(); });
+      button.setButtonText("移除").onClick(() => { this.plugin.settings.approvedDevices = approved.filter(item => item.clientId !== device.clientId); this.run(async () => { await this.plugin.saveSettings(); this.display(); }, "移除设备"); });
     }));
     this.addReset(container, async () => {
       this.plugin.settings.approvedDevices = [];
@@ -388,8 +419,9 @@ class OstraconSettingTab extends PluginSettingTab {
     if (config.quoteToggle) {
       const toggleLabel = actions.createEl("label", { cls: "ostracon-template-toggle" });
       toggleLabel.createSpan({ text: "同时在MN创建卡片" });
-      new ToggleComponent(toggleLabel).setValue(this.plugin.settings.createQuoteCard).onChange(async value => {
-        this.plugin.settings.createQuoteCard = value; await this.save(config.saveStatus);
+      new ToggleComponent(toggleLabel).setValue(this.plugin.settings.createQuoteCard).onChange(value => {
+        this.plugin.settings.createQuoteCard = value;
+        this.run(() => this.save(config.saveStatus), "保存引文卡片设置");
       });
     }
     const reset = actions.createEl("button", { text: "恢复默认", attr: { type: "button" } });

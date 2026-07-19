@@ -23,8 +23,15 @@ function serializeCardDragText(cardId: string): string {
 
 function parseCardDrag(value: string): string {
   if (!value) return "";
-  const payload = JSON.parse(value) as { cardId?: unknown };
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed !== "object" || parsed === null) return "";
+  const payload = Object.fromEntries(Object.entries(parsed));
   return typeof payload.cardId === "string" ? payload.cardId.trim() : "";
+}
+
+function hasCodeMirror(editor: Editor): editor is EditorWithCodeMirror & { cm: EditorView } {
+  if (!("cm" in editor) || typeof editor.cm !== "object" || editor.cm === null) return false;
+  return "contentDOM" in editor.cm && "posAtCoords" in editor.cm;
 }
 
 function isMarkdownFile(file: unknown): file is TFile {
@@ -59,8 +66,17 @@ class CardDropService {
     return true;
   }
 
+  shouldHandleDrop(event: DragEvent, editor: Editor, info: MarkdownView | MarkdownFileInfo): boolean {
+    if (event.defaultPrevented || !event.dataTransfer?.getData(CARD_DRAG_MIME)) return false;
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !target.closest(".cm-content")) return false;
+    if (target.closest(".inline-title, .metadata-container, .metadata-properties, .metadata-property")) return false;
+    if (!isMarkdownFile(info.file)) return false;
+    return hasCodeMirror(editor) && editor.cm.contentDOM.contains(target);
+  }
+
   async handleDrop(event: DragEvent, editor: Editor, info: MarkdownView | MarkdownFileInfo): Promise<boolean> {
-    if (event.defaultPrevented || !event.dataTransfer) return false;
+    if (!event.dataTransfer) return false;
     const rawPayload = event.dataTransfer.getData(CARD_DRAG_MIME);
     if (!rawPayload) return false;
 
@@ -69,8 +85,8 @@ class CardDropService {
     if (target.closest(".inline-title, .metadata-container, .metadata-properties, .metadata-property")) return false;
     if (!isMarkdownFile(info.file)) return false;
 
-    const codeMirror = (editor as EditorWithCodeMirror).cm;
-    if (!codeMirror || !codeMirror.contentDOM.contains(target)) return false;
+    if (!hasCodeMirror(editor) || !editor.cm.contentDOM.contains(target)) return false;
+    const codeMirror = editor.cm;
     const offset = codeMirror.posAtCoords({ x: event.clientX, y: event.clientY });
     if (offset === null) return false;
 
@@ -83,7 +99,6 @@ class CardDropService {
     }
     if (!cardId) return false;
 
-    event.preventDefault();
     try {
       const markdown = await this.host.fetchCards([cardId], "markdown");
       const localized = await this.host.processBase64InContent(markdown, info.file.path);

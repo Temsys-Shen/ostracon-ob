@@ -78,6 +78,8 @@ describe("CardDropService", () => {
     const file = Object.assign(new TFile(), { path: "Notes/Target.md", extension: "md" });
     const view = Object.assign(new MarkdownView(null as never), { file, getMode: () => "source" });
 
+    expect(service.shouldHandleDrop(event as never, editor as never, view)).toBe(true);
+    event.preventDefault();
     await expect(service.handleDrop(event as never, editor as never, view)).resolves.toBe(true);
 
     expect(event.preventDefault).toHaveBeenCalledOnce();
@@ -99,6 +101,8 @@ describe("CardDropService", () => {
     const event = createEvent(target);
     const info = { file: Object.assign(new TFile(), { path: "Target.md", extension: "md" }), editor };
 
+    expect(service.shouldHandleDrop(event as never, editor as never, info as never)).toBe(true);
+    event.preventDefault();
     await expect(service.handleDrop(event as never, editor as never, info as never)).resolves.toBe(true);
     expect(editor.replaceRange).toHaveBeenCalledWith("## Card", { line: 0, ch: 7 }, undefined, "ostracon-card-drop");
   });
@@ -111,7 +115,7 @@ describe("CardDropService", () => {
     const event = createEvent(target);
     const view = Object.assign(new MarkdownView(null as never), { file: Object.assign(new TFile(), { path: "Target.md" }) });
 
-    await expect(service.handleDrop(event as never, editor as never, view)).resolves.toBe(false);
+    expect(service.shouldHandleDrop(event as never, editor as never, view)).toBe(false);
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(host.fetchCards).not.toHaveBeenCalled();
   });
@@ -124,7 +128,7 @@ describe("CardDropService", () => {
     const event = createEvent(target);
     const view = Object.assign(new MarkdownView(null as never), { file: Object.assign(new TFile(), { path: "Target.md" }) });
 
-    await expect(service.handleDrop(event as never, editor as never, view)).resolves.toBe(false);
+    expect(service.shouldHandleDrop(event as never, editor as never, view)).toBe(false);
     expect(host.fetchCards).not.toHaveBeenCalled();
   });
 });

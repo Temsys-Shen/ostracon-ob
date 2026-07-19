@@ -1,9 +1,5 @@
 import { normalizePath, type App } from "obsidian";
 
-type VaultWithConfig = App["vault"] & {
-  getConfig(key: string): unknown;
-};
-
 async function ensureFolder(app: App, folderPath: string): Promise<void> {
   const segments = folderPath.split("/").filter(Boolean);
   let current = "";
@@ -16,8 +12,7 @@ async function ensureFolder(app: App, folderPath: string): Promise<void> {
 }
 
 function resolveAttachmentFolder(app: App, notePath: string): string {
-  const vault = app.vault as VaultWithConfig;
-  const raw = String(vault.getConfig("attachmentFolderPath") ?? "./assets");
+  const raw = String(app.vault.getConfig("attachmentFolderPath") ?? "./assets");
   const noteDir = notePath.split("/").slice(0, -1).join("/") || "/";
 
   if (raw.startsWith("./")) {

@@ -1,4 +1,4 @@
-import { Notice, Plugin, normalizePath } from "obsidian";
+import { Notice, Plugin, normalizePath, type View } from "obsidian";
 import {
   VIEW_TYPE_INBOX, DEFAULT_OUTPUT_FOLDER, DEFAULT_CARD_TEMPLATE, LEGACY_DEFAULT_CARD_TEMPLATE, createDefaultSettings, normalizePacket,
   buildPacketRecord, buildConnectionUrl,
@@ -28,6 +28,26 @@ interface OstraconPluginState {
   logs: Array<{ id: string; level: string; message: string; at: string }>;
 }
 
+type SavedPluginData = {
+  settings?: Partial<OstraconSettings>;
+  packets?: OstraconPacketRecord[];
+  logs?: OstraconPluginState["logs"];
+};
+
+function parseSavedPluginData(value: unknown): SavedPluginData | null {
+  if (value === null) return null;
+  if (typeof value !== "object") throw new Error("Ostracon设置数据必须是对象");
+  return value;
+}
+
+function hasPacket(value: unknown): value is { packet: OstraconPacket } {
+  return typeof value === "object" && value !== null && "packet" in value && typeof value.packet === "object" && value.packet !== null;
+}
+
+function isInboxView(view: View): view is OstraconInboxView {
+  return view.getViewType() === VIEW_TYPE_INBOX;
+}
+
 type StatusBarItem = ReturnType<Plugin["addStatusBarItem"]>;
 
 class OstraconPlugin extends Plugin {
@@ -44,7 +64,7 @@ class OstraconPlugin extends Plugin {
   pdfExportService!: PdfExportService;
 
   async onload(): Promise<void> {
-    const saved = await this.loadData() as { settings?: Partial<OstraconSettings>; packets?: OstraconPacketRecord[]; logs?: OstraconPluginState["logs"] } | null;
+    const saved = parseSavedPluginData(await this.loadData());
     this.settings = Object.assign(createDefaultSettings(), saved?.settings ?? {});
     if (this.settings.cardTemplate === LEGACY_DEFAULT_CARD_TEMPLATE) this.settings.cardTemplate = DEFAULT_CARD_TEMPLATE;
 
@@ -63,8 +83,12 @@ class OstraconPlugin extends Plugin {
     this.pdfExportService = new PdfExportService(
       async (path) => this.loadPdfSource(path),
       () => this.settings.pdfPrint,
+      html => this.bridge.publishPrintHtml(html),
     );
-    this.discovery = new OstraconDiscovery(this.settings.port, this.getVaultName());
+    this.discovery = new OstraconDiscovery(this.settings.port, this.getVaultName(), error => {
+      this.logLine("error", `mDNS发现服务失败: ${error.message}`);
+      new Notice(`Ostracon局域网发现失败: ${error.message}`);
+    });
 
     this.registerEvent(this.app.vault.on("create", () => this.vaultBrowser.invalidate()));
     this.registerEvent(this.app.vault.on("modify", () => this.vaultBrowser.invalidate()));
@@ -73,7 +97,13 @@ class OstraconPlugin extends Plugin {
     this.registerEvent(this.app.metadataCache.on("changed", () => this.vaultBrowser.invalidate()));
     this.registerEvent(this.app.metadataCache.on("deleted", () => this.vaultBrowser.invalidate()));
     this.registerEvent(this.app.workspace.on("editor-drop", (event, editor, info) => {
-      void this.cardDropService.handleDrop(event, editor, info);
+      if (!this.cardDropService.shouldHandleDrop(event, editor, info)) return;
+      event.preventDefault();
+      void this.cardDropService.handleDrop(event, editor, info).catch(error => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logLine("error", `拖放导入失败: ${message}`);
+        new Notice(`拖放导入失败: ${message}`);
+      });
     }));
     this.registerDomEvent(this.app.workspace.containerEl, "dragover", (event) => {
       this.cardDropService.handleDragOver(event);
@@ -89,20 +119,14 @@ class OstraconPlugin extends Plugin {
     this.registerEvent(this.app.workspace.on("file-open", broadcastQuoteContext));
 
     this.registerView(VIEW_TYPE_INBOX, (leaf) => new OstraconInboxView(leaf, this));
-    this.addRibbonIcon("inbox", "获取MN数据", () => this.activateInboxView());
-    this.addCommand({ id: "open-ostracon-inbox", name: "获取MN数据", callback: () => this.activateInboxView() });
-    this.addCommand({ id: "restart-ostracon-server", name: "重启Ostracon连接服务", callback: () => this.restartServer() });
+    this.addRibbonIcon("inbox", "获取MN数据", () => { this.runTask(() => this.activateInboxView(), "打开MN卡片面板"); });
+    this.addCommand({ id: "open-ostracon-inbox", name: "获取MN数据", callback: () => { this.runTask(() => this.activateInboxView(), "打开MN卡片面板"); } });
+    this.addCommand({ id: "restart-ostracon-server", name: "重启Ostracon连接服务", callback: () => { this.runTask(() => this.restartServer(), "重启Ostracon连接服务"); } });
     this.addCommand({
       id: "quote-mn",
       name: "Quote MN",
-      callback: async () => {
-        try {
-          await this.quoteService.insert({ target: "cursor" }, true);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.logLine("error", `Quote MN: ${message}`);
-          new Notice(`Quote MN失败: ${message}`);
-        }
+      callback: () => {
+        this.runTask(() => this.quoteService.insert({ target: "cursor" }, true).then(() => undefined), "Quote MN");
       },
     });
 
@@ -116,8 +140,16 @@ class OstraconPlugin extends Plugin {
     this.logLine("info", "plugin loaded");
   }
 
-  async onunload(): Promise<void> {
-    await this.stopServer();
+  onunload(): void {
+    this.runTask(() => this.stopServer(), "停止Ostracon服务");
+  }
+
+  private runTask(action: () => Promise<void>, context: string): void {
+    void action().catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logLine("error", `${context}: ${message}`);
+      new Notice(`${context}失败: ${message}`);
+    });
   }
 
   async saveSettings(): Promise<void> {
@@ -168,7 +200,7 @@ class OstraconPlugin extends Plugin {
   }
 
   openSettings(): void {
-    (this.app as unknown as { setting: { open: () => void } }).setting.open();
+    this.app.setting.open();
   }
 
   getConnectionUrl(): string {
@@ -190,8 +222,8 @@ class OstraconPlugin extends Plugin {
   getVaultBrowserState() { return this.vaultBrowser.getState(); }
   listVaultFolder(payload: Record<string, unknown>) { return this.vaultBrowser.listFolder(String(payload.path || "")); }
   listVaultTags() { return this.vaultBrowser.listTags(); }
-  listVaultDocuments(payload: Record<string, unknown>) { return this.vaultBrowser.listDocuments(payload as { tag?: string; cursor?: number; limit?: number }); }
-  searchVaultDocuments(payload: Record<string, unknown>) { return this.vaultBrowser.search(String(payload.query || ""), payload as { cursor?: number; limit?: number }); }
+  listVaultDocuments(payload: Record<string, unknown>) { return this.vaultBrowser.listDocuments({ tag: typeof payload.tag === "string" ? payload.tag : undefined, cursor: Number(payload.cursor || 0), limit: Number(payload.limit || 100) }); }
+  searchVaultDocuments(payload: Record<string, unknown>) { return this.vaultBrowser.search(String(payload.query || ""), { cursor: Number(payload.cursor || 0), limit: Number(payload.limit || 100) }); }
   getVaultDocument(payload: Record<string, unknown>) { return this.vaultBrowser.getDocument(String(payload.path || "")); }
   getVaultAsset(payload: Record<string, unknown>) { return this.vaultBrowser.getAsset(String(payload.path || "")); }
   createVaultDocumentPdfExport(payload: Record<string, unknown>) { return this.pdfExportService.create(String(payload.path || "")); }
@@ -222,7 +254,9 @@ class OstraconPlugin extends Plugin {
   logLine(level: string, message: string): void {
     const entry = { id: createId("log"), level, message, at: new Date().toISOString() };
     this.state.logs = [entry, ...this.state.logs].slice(0, 100);
-    this.persistState();
+    void this.persistState().catch(error => {
+      console.error("Ostracon failed to persist logs", error);
+    });
     this.refreshViews();
   }
 
@@ -241,7 +275,9 @@ class OstraconPlugin extends Plugin {
         name: name || clientId,
         approvedAt: new Date().toISOString(),
       });
-      this.saveSettings();
+      void this.saveSettings().catch(error => {
+        this.logLine("error", `保存设备授权失败: ${error instanceof Error ? error.message : String(error)}`);
+      });
       this.logLine("info", `device approved: ${name || clientId}`);
     }
   }
@@ -274,10 +310,10 @@ class OstraconPlugin extends Plugin {
       await this.startServer();
     }
     const raw = await this.bridge.requestClientCommand("fetchCards", { cardIds, format, cardTemplate: this.settings.cardTemplate }, 20000);
-    if (!raw || typeof raw !== "object" || !(raw as { packet?: unknown }).packet) {
+    if (!hasPacket(raw)) {
       throw new Error("MN没有返回可导入的数据包");
     }
-    const packet = (raw as { packet: OstraconPacket }).packet;
+    const packet = raw.packet;
     const normalized = normalizePacket(packet);
     const record = buildPacketRecord(normalized, "", { transport: "pull" });
     return buildPacketMarkdown(normalized, record, true);
@@ -288,10 +324,10 @@ class OstraconPlugin extends Plugin {
       await this.startServer();
     }
     const raw = await this.bridge.requestClientCommand("fetchCards", { cardIds, format: "markdown", cardTemplate: this.settings.cardTemplate }, 30000);
-    if (!raw || typeof raw !== "object" || !(raw as { packet?: unknown }).packet) {
+    if (!hasPacket(raw)) {
       throw new Error("MN没有返回可预览的数据");
     }
-    const packet = (raw as { packet: OstraconPacket }).packet;
+    const packet = raw.packet;
     return packet.notes || "";
   }
 
@@ -348,11 +384,7 @@ class OstraconPlugin extends Plugin {
   refreshViews(): void {
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_INBOX);
     for (const leaf of leaves) {
-      const view = leaf.view;
-      const inboxView = view as unknown as OstraconInboxView;
-      if (inboxView && typeof inboxView.render === "function") {
-        inboxView.render();
-      }
+      if (isInboxView(leaf.view)) leaf.view.render();
     }
   }
 

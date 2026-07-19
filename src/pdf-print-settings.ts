@@ -36,6 +36,14 @@ type ElectronPdfOptions = {
   preferCSSPageSize: boolean;
 };
 
+function isPdfPaperSize(value: string): value is PdfPaperSize {
+  return ["A4", "A3", "Letter", "Legal", "custom"].includes(value);
+}
+
+function isPdfMarginPreset(value: string): value is PdfMarginPreset {
+  return ["narrow", "standard", "wide", "custom"].includes(value);
+}
+
 const MAX_PRINT_MEDIA_HEIGHT_PX = 16_383;
 const PDF_PAPER_DIMENSIONS_MM: Record<Exclude<PdfPaperSize, "custom">, { width: number; height: number }> = {
   A4: { width: 210, height: 297 },
@@ -182,6 +190,7 @@ export {
   MAX_PRINT_MEDIA_HEIGHT_PX, PDF_MARGIN_PRESETS, PDF_PAPER_DIMENSIONS_MM, applyCustomPaperDimension,
   applyMarginPreset, applyCustomMargin, applyPaperSize, buildCssPageRule, buildElectronPdfOptions,
   compileHeaderFooterTemplate, createDefaultPdfPrintSettings, effectiveMargins,
+  isPdfMarginPreset, isPdfPaperSize,
   validatePdfPrintSettings,
 };
 export type { ElectronPdfOptions, PdfMarginPreset, PdfMarginsMm, PdfPaperSize, PdfPrintSettings };

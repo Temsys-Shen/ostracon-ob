@@ -19,7 +19,7 @@ class OstraconInboxView extends ItemView {
   loading = false;
   backgroundLoading = false;
   errorText = "";
-  connCheckTimer: ReturnType<typeof setInterval> | null = null;
+  connCheckTimer: number | null = null;
   isConnected = false;
 
   collapsedGroups: Set<string> = new Set();
@@ -33,7 +33,7 @@ class OstraconInboxView extends ItemView {
   dragStartIndex = -1;
   dragSelectionOccurred = false;
 
-  retryTimer: ReturnType<typeof setInterval> | null = null;
+  retryTimer: number | null = null;
   cardAreaEl: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ViewHost) {
@@ -50,14 +50,14 @@ class OstraconInboxView extends ItemView {
     document.addEventListener("keyup", this.onKeyUp);
     document.addEventListener("mouseup", this.onMouseUp);
     this.render();
-    this.connCheckTimer = setInterval(() => this.checkConnection(), 2000);
+    this.connCheckTimer = window.setInterval(() => this.checkConnection(), 2000);
   }
 
   async onClose(): Promise<void> {
     document.removeEventListener("keydown", this.onKeyDown);
     document.removeEventListener("keyup", this.onKeyUp);
     document.removeEventListener("mouseup", this.onMouseUp);
-    if (this.connCheckTimer) clearInterval(this.connCheckTimer);
+    if (this.connCheckTimer) window.clearInterval(this.connCheckTimer);
     this.clearRetryTimer();
     this.contentEl.empty();
   }
@@ -88,7 +88,7 @@ class OstraconInboxView extends ItemView {
       this.isConnected = connected;
       if (!connected) this.clearRetryTimer();
       this.render();
-      if (connected) this.fetchCards();
+      if (connected) void this.fetchCards();
     }
   }
 
@@ -121,9 +121,9 @@ class OstraconInboxView extends ItemView {
 
   startRetryTimer(): void {
     this.clearRetryTimer();
-    this.retryTimer = setInterval(() => {
+    this.retryTimer = window.setInterval(() => {
       if (this.plugin.isServerRunning() && this.plugin.getClientCount() > 0) {
-        this.fetchCards();
+        void this.fetchCards();
       } else {
         this.clearRetryTimer();
       }
@@ -132,7 +132,7 @@ class OstraconInboxView extends ItemView {
 
   clearRetryTimer(): void {
     if (this.retryTimer) {
-      clearInterval(this.retryTimer);
+      window.clearInterval(this.retryTimer);
       this.retryTimer = null;
     }
   }
@@ -140,13 +140,13 @@ class OstraconInboxView extends ItemView {
   doRetry(): void {
     this.clearRetryTimer();
     this.errorText = "";
-    this.fetchCards();
+    void this.fetchCards();
   }
 
   restoreSearchFocus(): void {
     if (this.searchQuery) {
-      const input = this.contentEl.querySelector(".ostracon-search-inline") as HTMLInputElement;
-      if (input && document.activeElement !== input) {
+      const input = this.contentEl.querySelector(".ostracon-search-inline");
+      if (input instanceof HTMLInputElement && document.activeElement !== input) {
         input.focus();
         input.setSelectionRange(input.value.length, input.value.length);
       }
@@ -156,8 +156,8 @@ class OstraconInboxView extends ItemView {
   updateActionBarState(): void {
     const countEl = this.contentEl.querySelector(".ostracon-count");
     if (countEl) countEl.textContent = `已选中 ${this.selectedCardIds.size} 张`;
-    const btn = this.contentEl.querySelector(".ostracon-import-btn") as HTMLButtonElement;
-    if (btn) btn.disabled = this.selectedCardIds.size === 0;
+    const btn = this.contentEl.querySelector(".ostracon-import-btn");
+    if (btn instanceof HTMLButtonElement) btn.disabled = this.selectedCardIds.size === 0;
   }
 
   renderStatus(): void {
@@ -210,7 +210,7 @@ class OstraconInboxView extends ItemView {
       text: "导入到笔记",
     });
     btn.disabled = this.selectedCardIds.size === 0;
-    btn.addEventListener("click", () => this.doImport(Array.from(this.selectedCardIds)));
+    btn.addEventListener("click", () => { void this.doImport(Array.from(this.selectedCardIds)); });
   }
 
   updateCardAreaContent(): void {
@@ -359,7 +359,7 @@ class OstraconInboxView extends ItemView {
     });
 
     head.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).closest("input, .ostracon-group-content-btn")) return;
+      if (e.target instanceof HTMLElement && e.target.closest("input, .ostracon-group-content-btn")) return;
       if (this.collapsedGroups.has(group.key)) {
         this.collapsedGroups.delete(group.key);
       } else {
@@ -444,10 +444,12 @@ class OstraconInboxView extends ItemView {
       const cardItems = this.cardAreaEl?.querySelectorAll(".ostracon-card-item");
       if (cardItems) {
         for (const el of cardItems) {
-          const id = (el as HTMLElement).dataset.cardId;
+          if (!(el instanceof HTMLElement)) continue;
+          const id = el.dataset.cardId;
           if (id) {
             const checked = this.selectedCardIds.has(id);
-            (el.querySelector('input[type="checkbox"]') as HTMLInputElement).checked = checked;
+            const checkbox = el.querySelector('input[type="checkbox"]');
+            if (checkbox instanceof HTMLInputElement) checkbox.checked = checked;
             el.toggleClass("is-checked", checked);
           }
         }
@@ -455,12 +457,12 @@ class OstraconInboxView extends ItemView {
 
       const groupEl = this.cardAreaEl?.querySelector(`.ostracon-card-group[data-group-key="${group.key}"]`);
       if (groupEl) {
-        const headCb = groupEl.querySelector(".ostracon-group-head input[type='checkbox']") as HTMLInputElement;
-        if (headCb) {
+        const headCb = groupEl.querySelector(".ostracon-group-head input[type='checkbox']");
+        if (headCb instanceof HTMLInputElement) {
           const cardEls = groupEl.querySelectorAll(".ostracon-card-item");
           let checkedCount = 0;
           for (const el of cardEls) {
-            const id = (el as HTMLElement).dataset.cardId;
+            const id = el instanceof HTMLElement ? el.dataset.cardId : undefined;
             if (id && this.selectedCardIds.has(id)) checkedCount++;
           }
           headCb.checked = checkedCount === cardEls.length;
@@ -472,17 +474,17 @@ class OstraconInboxView extends ItemView {
     });
 
     item.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).tagName === "INPUT") return;
+      if (e.target instanceof HTMLElement && e.target.tagName === "INPUT") return;
       if (this.isShiftDown || this.isMetaDown) return;
       if (this.dragSelectionOccurred) return;
-      new CardDetailModal(this.app, this, card, () => this.doImport([card.id]), (id) => this.plugin.previewCards([id])).open();
+      new CardDetailModal(this.app, this, card, () => { void this.doImport([card.id]); }, (id) => this.plugin.previewCards([id])).open();
     });
 
     item.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       const menu = new Menu();
       menu.addItem((i) =>
-        i.setTitle("导入此卡片").onClick(() => this.doImport([card.id]))
+        i.setTitle("导入此卡片").onClick(() => { void this.doImport([card.id]); })
       );
       menu.addItem((i) =>
         i.setTitle("选中/取消选中").onClick(() => {
@@ -497,7 +499,7 @@ class OstraconInboxView extends ItemView {
       );
       if (this.selectedCardIds.size > 0) {
         menu.addItem((i) =>
-          i.setTitle(`导入所有选中 (${this.selectedCardIds.size})`).onClick(() => this.doImport(Array.from(this.selectedCardIds)))
+          i.setTitle(`导入所有选中 (${this.selectedCardIds.size})`).onClick(() => { void this.doImport(Array.from(this.selectedCardIds)); })
         );
       }
       menu.showAtPosition({ x: e.clientX, y: e.clientY });
@@ -688,7 +690,7 @@ class CardDetailModal extends Modal {
     contentEl.addClass("ostracon-detail-modal");
 
     this.renderLocalContent();
-    this.loadFullContent();
+    void this.loadFullContent();
   }
 
   renderLocalContent(): void {
@@ -731,7 +733,7 @@ class CardDetailModal extends Modal {
       markdown = await Promise.race([
         this.previewFn(this.card.id),
         new Promise<string>((_, reject) =>
-          setTimeout(() => reject(new Error("连接MN超时")), 10000),
+          window.setTimeout(() => reject(new Error("连接MN超时")), 10000),
         ),
       ]);
     } catch (e) {
@@ -774,7 +776,7 @@ class CardDetailModal extends Modal {
       e.preventDefault();
       loadingEl.replaceChildren();
       loadingEl.createSpan({ text: "正在加载完整内容…" });
-      this.loadFullContent();
+      void this.loadFullContent();
     });
   }
 

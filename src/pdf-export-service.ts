@@ -1,7 +1,5 @@
 import { randomUUID } from "crypto";
-import { mkdtemp, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import { remote } from "electron";
 import {
   buildCssPageRule, buildElectronPdfOptions, createDefaultPdfPrintSettings,
   type ElectronPdfOptions, type PdfPrintSettings,
@@ -10,7 +8,7 @@ import {
 const MAX_PDF_BYTES = 200 * 1024 * 1024;
 const PDF_CHUNK_BYTES = 12_000;
 type BrowserWindowLike = {
-  loadFile: (path: string) => Promise<void>;
+  loadURL: (url: string) => Promise<void>;
   webContents: {
     printToPDF: (options: ElectronPdfOptions) => Promise<Buffer>;
   };
@@ -38,6 +36,8 @@ type PdfExportSession = {
 
 type PdfSourceLoader = (path: string) => Promise<PdfSource>;
 type PdfPrintSettingsProvider = () => PdfPrintSettings;
+type PublishedPrintHtml = { url: string; release: () => void };
+type PrintHtmlPublisher = (html: string) => PublishedPrintHtml;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -86,23 +86,25 @@ body { overflow-wrap: anywhere; word-break: break-word; }
 }
 
 function defaultBrowserWindowConstructor(): BrowserWindowConstructor {
-  const electron = require("electron") as { remote: { BrowserWindow: BrowserWindowConstructor } };
-  return electron.remote.BrowserWindow;
+  return remote.BrowserWindow;
 }
 
 class PdfExportService {
   private readonly loadSource: PdfSourceLoader;
   private readonly getPrintSettings: PdfPrintSettingsProvider;
+  private readonly publishPrintHtml: PrintHtmlPublisher;
   private readonly BrowserWindow: BrowserWindowConstructor;
   private readonly sessions = new Map<string, PdfExportSession>();
 
   constructor(
     loadSource: PdfSourceLoader,
     getPrintSettings: PdfPrintSettingsProvider = createDefaultPdfPrintSettings,
+    publishPrintHtml: PrintHtmlPublisher,
     BrowserWindow = defaultBrowserWindowConstructor(),
   ) {
     this.loadSource = loadSource;
     this.getPrintSettings = getPrintSettings;
+    this.publishPrintHtml = publishPrintHtml;
     this.BrowserWindow = BrowserWindow;
   }
 
@@ -122,20 +124,18 @@ class PdfExportService {
       webPreferences: { offscreen: true },
     });
     let data: Buffer;
-    let tempDirectory: string | null = null;
+    let publishedHtml: PublishedPrintHtml | null = null;
     try {
       const settings = this.getPrintSettings();
       const html = buildPrintHtml(source, settings);
-      tempDirectory = await mkdtemp(join(tmpdir(), "ostracon-pdf-"));
-      const htmlPath = join(tempDirectory, "document.html");
-      await writeFile(htmlPath, html, "utf8");
-      await window.loadFile(htmlPath);
+      publishedHtml = this.publishPrintHtml(html);
+      await window.loadURL(publishedHtml.url);
       data = await window.webContents.printToPDF(buildElectronPdfOptions(settings));
     } catch (error) {
       throw new Error(`Electron生成PDF失败: ${normalizedPath}: ${errorMessage(error)}`);
     } finally {
       window.destroy();
-      if (tempDirectory) await rm(tempDirectory, { recursive: true });
+      publishedHtml?.release();
     }
 
     if (data.length <= 0) throw new Error(`Electron生成的PDF为空: ${normalizedPath}`);

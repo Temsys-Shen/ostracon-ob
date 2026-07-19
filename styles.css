@@ -449,7 +449,6 @@
   padding: 0 0 8px;
   overflow-x: auto;
   border-bottom: 1px solid var(--background-modifier-border);
-  scrollbar-width: thin;
 }
 .ostracon-settings-tabs button {
   display: inline-flex;

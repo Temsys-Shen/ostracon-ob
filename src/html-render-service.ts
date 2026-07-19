@@ -45,7 +45,9 @@ function normalizeImageSizing(element: Pick<HTMLImageElement, "tagName" | "remov
 }
 
 function snapshotRenderedHtml(container: HTMLElement): string {
-  const clone = container.cloneNode(true) as HTMLElement;
+  const clonedNode = container.cloneNode(true);
+  if (!(clonedNode instanceof HTMLElement)) throw new Error("Obsidian文档HTML快照根节点无效");
+  const clone = clonedNode;
   const sources = Array.from(container.querySelectorAll<HTMLElement | SVGElement>("*"));
   const targets = Array.from(clone.querySelectorAll<HTMLElement | SVGElement>("*"));
   if (sources.length !== targets.length) throw new Error("Obsidian文档HTML快照结构不一致");
@@ -63,7 +65,7 @@ function snapshotRenderedHtml(container: HTMLElement): string {
         if (value) target.setCssProps({ [property]: value });
       }
     }
-    normalizeImageSizing(target as HTMLImageElement);
+    if (target instanceof HTMLImageElement) normalizeImageSizing(target);
   }
   return clone.innerHTML;
 }
@@ -98,7 +100,7 @@ class ObsidianHtmlRenderService {
 
   async render(markdown: string, sourcePath: string): Promise<{ renderedHtml: string; plainText: string; renderVersion: number }> {
     const component = new Component();
-    const container = document.createElement("div");
+    const container = createDiv();
     container.className = "ostracon-html-render-source markdown-rendered";
     document.body.appendChild(container);
     component.load();

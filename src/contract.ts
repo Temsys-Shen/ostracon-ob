@@ -232,37 +232,47 @@ function createDefaultSettings(): OstraconSettings {
   };
 }
 
-function normalizePacket(packet: OstraconPacket): OstraconPacket {
-  if (!packet || typeof packet !== "object") throw new Error("Packet must be an object");
-  if (packet.version !== PACKET_VERSION) throw new Error(`Unsupported packet version: ${packet.version}`);
+function objectRecord(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${field} must be an object`);
+  return Object.fromEntries(Object.entries(value));
+}
+
+function normalizePacket(value: unknown): OstraconPacket {
+  const packet = objectRecord(value, "Packet");
+  if (packet.version !== PACKET_VERSION) throw new Error(`Unsupported packet version: ${String(packet.version)}`);
   if (!packet.id || typeof packet.id !== "string") throw new Error("Packet missing id");
-  if (!packet.source || typeof packet.source !== "object") throw new Error("Packet missing source");
+  const source = objectRecord(packet.source, "Packet source");
   if (!Array.isArray(packet.objects)) throw new Error("Packet objects must be an array");
 
   return {
     version: PACKET_VERSION,
     id: packet.id,
-    status: packet.status || DEFAULTS.status,
-    transport: packet.transport || DEFAULTS.transport,
-    createdAt: packet.createdAt || nowIso(),
+    status: String(packet.status || DEFAULTS.status),
+    transport: String(packet.transport || DEFAULTS.transport),
+    createdAt: String(packet.createdAt || nowIso()),
     updatedAt: nowIso(),
-    source: { platform: packet.source.platform || "MarginNote", title: packet.source.title || "", url: packet.source.url || "" },
-    summary: packet.summary || "",
+    source: { platform: String(source.platform || "MarginNote"), title: String(source.title || ""), url: String(source.url || "") },
+    summary: String(packet.summary || ""),
     tags: normalizeTags(packet.tags),
-    objects: packet.objects.map(item => ({
-      id: item.id || createId("object"),
-      kind: item.kind || "Card",
-      title: item.title || "",
-      comment: item.comment || "",
-      sourceAnchor: item.sourceAnchor || "",
-      hasImage: Boolean(item.hasImage),
-      hasHandwriting: Boolean(item.hasHandwriting),
-    })),
+    objects: packet.objects.map((value, index) => {
+      const item = objectRecord(value, `Packet object ${index}`);
+      return {
+        id: String(item.id || createId("object")),
+        kind: String(item.kind || "Card"),
+        title: String(item.title || ""),
+        comment: String(item.comment || ""),
+        sourceAnchor: String(item.sourceAnchor || ""),
+        hasImage: Boolean(item.hasImage),
+        hasHandwriting: Boolean(item.hasHandwriting),
+      };
+    }),
     relations: Array.isArray(packet.relations) ? packet.relations : [],
-    notes: packet.notes || "",
-    format: packet.format || "",
-    fileName: packet.fileName || "",
-    destination: packet.destination || { platform: "Obsidian", vault: "", folder: "Inbox" },
+    notes: String(packet.notes || ""),
+    format: String(packet.format || ""),
+    fileName: String(packet.fileName || ""),
+    destination: packet.destination
+      ? (() => { const destination = objectRecord(packet.destination, "Packet destination"); return { platform: String(destination.platform || "Obsidian"), vault: String(destination.vault || ""), folder: String(destination.folder || "Inbox") }; })()
+      : { platform: "Obsidian", vault: "", folder: "Inbox" },
   };
 }
 
@@ -300,7 +310,7 @@ function buildPacketRecord(packet: OstraconPacket, filePath: string, meta: Ostra
   const normalized = normalizePacket(packet);
   return {
     id: normalized.id, packet: normalized, summary: summarizePacket(normalized), filePath,
-    source: normalized.source, tags: normalized.tags as string[],
+    source: normalized.source, tags: normalizeTags(normalized.tags),
     receivedAt: meta.receivedAt || nowIso(), transport: meta.transport || DEFAULTS.transport,
     requestId: meta.requestId || "", clientId: meta.clientId || "",     messageType: meta.messageType || DEFAULTS.messageType,
     version: meta.version ?? 1,

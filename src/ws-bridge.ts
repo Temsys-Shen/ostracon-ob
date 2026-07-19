@@ -1,4 +1,5 @@
 import http from "http";
+import { randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   DEFAULTS, buildAckPayload,
@@ -11,7 +12,6 @@ import {
   type OstraconCardSummary,
   type OstraconMessage,
   type OstraconNotebookSummary,
-  type OstraconPacket,
   type BridgeHost,
 } from "./contract";
 
@@ -30,18 +30,70 @@ type CachedFrames = {
 type PendingClientRequest = {
   resolve: (payload: unknown) => void;
   reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: number;
 };
+
+type PublishedPrintHtml = { url: string; release: () => void };
+
+function recordPayload(value: unknown): Record<string, unknown> {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("命令payload必须是对象");
+  return Object.fromEntries(Object.entries(value));
+}
+
+function parseMessage(value: unknown): OstraconMessage {
+  const message = recordPayload(value);
+  if (typeof message.type !== "string") throw new Error("Message missing type");
+  return {
+    type: message.type,
+    requestId: typeof message.requestId === "string" ? message.requestId : undefined,
+    command: typeof message.command === "string" ? message.command : undefined,
+    payload: message.payload,
+    event: typeof message.event === "string" ? message.event : undefined,
+    clientId: typeof message.clientId === "string" ? message.clientId : undefined,
+  };
+}
+
+function parseQuoteInsertRequest(value: unknown): import("./contract").QuoteInsertRequest {
+  const payload = recordPayload(value);
+  if (payload.target !== "cursor" && payload.target !== "active-file" && payload.target !== "file") throw new Error("引文目标无效");
+  return { target: payload.target, filePath: typeof payload.filePath === "string" ? payload.filePath : undefined };
+}
+
+function parseNotebookSummary(value: unknown): OstraconNotebookSummary {
+  const item = recordPayload(value);
+  if (typeof item.id !== "string" || typeof item.title !== "string" || typeof item.source !== "string") throw new Error("MN返回的学习集数据格式不正确");
+  return { id: item.id, title: item.title, source: item.source, selected: typeof item.selected === "boolean" ? item.selected : undefined, cardCount: typeof item.cardCount === "number" ? item.cardCount : undefined };
+}
+
+function parseCardSummary(value: unknown): OstraconCardSummary {
+  const item = recordPayload(value);
+  if (typeof item.id !== "string") throw new Error("MN返回的卡片数据格式不正确");
+  return {
+    id: item.id,
+    title: typeof item.title === "string" ? item.title : "",
+    comment: typeof item.comment === "string" ? item.comment : "",
+    sourceAnchor: typeof item.sourceAnchor === "string" ? item.sourceAnchor : "",
+    selected: typeof item.selected === "boolean" ? item.selected : undefined,
+    hasImage: typeof item.hasImage === "boolean" ? item.hasImage : undefined,
+    hasHandwriting: typeof item.hasHandwriting === "boolean" ? item.hasHandwriting : undefined,
+    colorIndex: typeof item.colorIndex === "number" ? item.colorIndex : undefined,
+    tag: typeof item.tag === "string" ? item.tag : undefined,
+    children: Array.isArray(item.children) ? item.children.map(parseCardSummary) : undefined,
+  };
+}
 
 class OstraconWsBridge {
   plugin: BridgeHost;
   httpServer: http.Server | null;
   wss: WebSocketServer | null;
   clients: Set<WebSocket>;
-  heartbeatTimer: ReturnType<typeof setInterval> | null;
+  heartbeatTimer: number | null;
   processedRequests: Map<string, CachedFrames>;
   clientState: Map<WebSocket, ClientState>;
+  clientAlive: WeakMap<WebSocket, boolean>;
   pendingClientRequests: Map<string, PendingClientRequest>;
+  printDocuments: Map<string, string>;
   started: boolean;
 
   constructor(plugin: BridgeHost) {
@@ -52,7 +104,9 @@ class OstraconWsBridge {
     this.heartbeatTimer = null;
     this.processedRequests = new Map();
     this.clientState = new Map();
+    this.clientAlive = new WeakMap();
     this.pendingClientRequests = new Map();
+    this.printDocuments = new Map();
     this.started = false;
   }
 
@@ -71,6 +125,15 @@ class OstraconWsBridge {
 
     await new Promise<void>((resolve, reject) => {
       const server = http.createServer((req, res) => {
+        const printHtml = this.getPrintDocument(req.method, req.url);
+        if (printHtml !== null) {
+          res.writeHead(200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+          res.end(printHtml);
+          return;
+        }
         // Discovery endpoint for MN to find OB instances on the LAN
         if (req.method === "GET" && req.url === "/ostracon/discover") {
           res.writeHead(200, {
@@ -109,7 +172,7 @@ class OstraconWsBridge {
   async stop(): Promise<void> {
     this.started = false;
     if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
+      window.clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
 
@@ -122,6 +185,7 @@ class OstraconWsBridge {
     }
     this.clients.clear();
     this.clientState.clear();
+    this.printDocuments.clear();
     this.rejectPendingClientRequests(new Error("Ostracon server stopped"));
 
     if (this.wss) {
@@ -135,6 +199,23 @@ class OstraconWsBridge {
     }
   }
 
+  publishPrintHtml(html: string): PublishedPrintHtml {
+    if (!this.isRunning) throw new Error("Ostracon连接服务未启动，无法加载PDF打印页面");
+    const token = randomUUID();
+    this.printDocuments.set(token, html);
+    return {
+      url: `http://127.0.0.1:${Number(this.plugin.settings.port)}/ostracon/pdf/${token}`,
+      release: () => { this.printDocuments.delete(token); },
+    };
+  }
+
+  private getPrintDocument(method: string | undefined, requestUrl: string | undefined): string | null {
+    if (method !== "GET" || !requestUrl) return null;
+    const match = /^\/ostracon\/pdf\/([0-9a-f-]+)$/.exec(requestUrl);
+    if (!match) return null;
+    return this.printDocuments.get(match[1]) ?? null;
+  }
+
   async restart(): Promise<void> {
     await this.stop();
     await this.start();
@@ -142,21 +223,20 @@ class OstraconWsBridge {
 
   startHeartbeat(): void {
     if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
+      window.clearInterval(this.heartbeatTimer);
     }
 
-    this.heartbeatTimer = setInterval(() => {
+    this.heartbeatTimer = window.setInterval(() => {
       for (const client of this.clients) {
         if (client.readyState !== WebSocket.OPEN) {
           continue;
         }
         try {
-          const socket = client as WebSocket & { isAlive?: boolean };
-          if (socket.isAlive === false) {
+          if (this.clientAlive.get(client) === false) {
             client.terminate();
             continue;
           }
-          socket.isAlive = false;
+          this.clientAlive.set(client, false);
           client.ping();
         } catch (error) {
           void error;
@@ -228,10 +308,9 @@ class OstraconWsBridge {
         this.clientState.delete(ws);
       });
 
-      const socket = ws as WebSocket & { isAlive?: boolean };
-      socket.isAlive = true;
+      this.clientAlive.set(ws, true);
       ws.on("pong", () => {
-        socket.isAlive = true;
+        this.clientAlive.set(ws, true);
         client.lastSeenAt = nowIso();
       });
 
@@ -278,10 +357,15 @@ class OstraconWsBridge {
       payload: buildHelloPayload(this.plugin.settings, this.plugin.getVaultName()),
     });
 
-    ws.on("message", async (raw) => {
+    ws.on("message", raw => {
+      void this.handleRawMessage(ws, client, raw);
+    });
+  }
+
+  private async handleRawMessage(ws: WebSocket, client: ClientState, raw: import("ws").RawData): Promise<void> {
       let message: OstraconMessage;
       try {
-        message = JSON.parse(raw.toString("utf8")) as OstraconMessage;
+        message = parseMessage(JSON.parse(raw.toString("utf8")));
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         this.send(ws, {
@@ -309,7 +393,6 @@ class OstraconWsBridge {
         });
         this.plugin.logLine("error", detail);
       }
-    });
   }
 
   async handleMessage(ws: WebSocket, client: ClientState, message: OstraconMessage): Promise<void> {
@@ -342,9 +425,7 @@ class OstraconWsBridge {
 
     switch (message.type) {
       case "hello": {
-        const payload = message.payload && typeof message.payload === "object"
-          ? message.payload as { protocolVersion?: number; pluginId?: string }
-          : {};
+        const payload = recordPayload(message.payload);
         if (payload.protocolVersion !== PROTOCOL_VERSION || payload.pluginId !== "ostracon-mn") {
           const errorMessage = "插件版本不一致，请同时更新MarginNote端和Obsidian端";
           enqueue({
@@ -439,7 +520,7 @@ class OstraconWsBridge {
 
     switch (command) {
       case "submitPacket": {
-        const packet = normalizePacket(message.payload as OstraconPacket);
+        const packet = normalizePacket(message.payload);
         const record = await this.plugin.ingestPacket(packet, {
           transport: "ws",
           requestId: message.requestId || "",
@@ -465,31 +546,31 @@ class OstraconWsBridge {
         enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.getVaultBrowserState() });
         break;
       case "listVaultFolder":
-        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.listVaultFolder((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.listVaultFolder(recordPayload(message.payload)) });
         break;
       case "listVaultTags":
         enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.listVaultTags() });
         break;
       case "listVaultDocuments":
-        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.listVaultDocuments((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.listVaultDocuments(recordPayload(message.payload)) });
         break;
       case "searchVaultDocuments":
-        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.searchVaultDocuments((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.searchVaultDocuments(recordPayload(message.payload)) });
         break;
       case "getVaultDocument":
-        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.getVaultDocument((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.getVaultDocument(recordPayload(message.payload)) });
         break;
       case "getVaultAsset":
-        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.getVaultAsset((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.getVaultAsset(recordPayload(message.payload)) });
         break;
       case "createVaultDocumentPdfExport":
-        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.createVaultDocumentPdfExport((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: await this.plugin.createVaultDocumentPdfExport(recordPayload(message.payload)) });
         break;
       case "readVaultDocumentPdfChunk":
-        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.readVaultDocumentPdfChunk((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.readVaultDocumentPdfChunk(recordPayload(message.payload)) });
         break;
       case "releaseVaultDocumentPdfExport":
-        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.releaseVaultDocumentPdfExport((message.payload || {}) as Record<string, unknown>) });
+        enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.releaseVaultDocumentPdfExport(recordPayload(message.payload)) });
         break;
       case "getQuoteContext":
         enqueue({ type: "command_result", requestId: message.requestId || "", payload: this.plugin.getQuoteContext() });
@@ -498,7 +579,7 @@ class OstraconWsBridge {
         enqueue({
           type: "command_result",
           requestId: message.requestId || "",
-          payload: await this.plugin.insertQuote((message.payload || {}) as import("./contract").QuoteInsertRequest),
+          payload: await this.plugin.insertQuote(parseQuoteInsertRequest(message.payload)),
         });
         break;
       default:
@@ -537,7 +618,7 @@ class OstraconWsBridge {
     const requestId = createId(command);
 
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = window.setTimeout(() => {
         this.pendingClientRequests.delete(requestId);
         reject(new Error(`MN命令超时: ${command}`));
       }, timeoutMs);
@@ -560,18 +641,20 @@ class OstraconWsBridge {
 
   async listNotebooks(): Promise<OstraconNotebookSummary[]> {
     const payload = await this.requestClientCommand("listNotebooks");
-    if (!payload || typeof payload !== "object" || !Array.isArray((payload as { notebooks?: unknown }).notebooks)) {
+    const result = recordPayload(payload);
+    if (!Array.isArray(result.notebooks)) {
       throw new Error("MN返回的学习集列表格式不正确");
     }
-    return (payload as { notebooks: OstraconNotebookSummary[] }).notebooks;
+    return result.notebooks.map(parseNotebookSummary);
   }
 
   async listCards(notebookId: string): Promise<OstraconCardSummary[]> {
     const payload = await this.requestClientCommand("listCards", { notebookId });
-    if (!payload || typeof payload !== "object" || !Array.isArray((payload as { cards?: unknown }).cards)) {
+    const result = recordPayload(payload);
+    if (!Array.isArray(result.cards)) {
       throw new Error("MN返回的卡片列表格式不正确");
     }
-    return (payload as { cards: OstraconCardSummary[] }).cards;
+    return result.cards.map(parseCardSummary);
   }
 
   resolvePendingClientRequest(message: OstraconMessage): void {
@@ -582,7 +665,7 @@ class OstraconWsBridge {
     if (!pending) {
       return;
     }
-    clearTimeout(pending.timer);
+    window.clearTimeout(pending.timer);
     this.pendingClientRequests.delete(message.requestId);
     pending.resolve(message.payload);
   }
@@ -595,15 +678,15 @@ class OstraconWsBridge {
     if (!pending) {
       return;
     }
-    clearTimeout(pending.timer);
+    window.clearTimeout(pending.timer);
     this.pendingClientRequests.delete(message.requestId);
-    const payload = message.payload as { message?: string } | undefined;
-    pending.reject(new Error(payload && payload.message ? payload.message : "MN返回错误"));
+    const payload = recordPayload(message.payload);
+    pending.reject(new Error(typeof payload.message === "string" && payload.message ? payload.message : "MN返回错误"));
   }
 
   rejectPendingClientRequests(error: Error): void {
     for (const [requestId, pending] of this.pendingClientRequests.entries()) {
-      clearTimeout(pending.timer);
+      window.clearTimeout(pending.timer);
       pending.reject(error);
       this.pendingClientRequests.delete(requestId);
     }

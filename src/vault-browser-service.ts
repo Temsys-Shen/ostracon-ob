@@ -33,6 +33,10 @@ function titleForFile(file: TFile, frontmatter: Record<string, unknown> | undefi
   return title || file.basename;
 }
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null ? Object.fromEntries(Object.entries(value)) : undefined;
+}
+
 function stripFrontmatter(content: string, cache: ReturnType<App["metadataCache"]["getFileCache"]>): string {
   const position = cache?.frontmatterPosition;
   if (!position) return content;
@@ -48,7 +52,7 @@ class VaultBrowserService {
   private searchBuild: Promise<void> | null = null;
   private onChange: BrowserChangeHandler;
   private htmlRenderer: Pick<ObsidianHtmlRenderService, "render">;
-  private invalidateTimer: ReturnType<typeof setTimeout> | null = null;
+  private invalidateTimer: number | null = null;
 
   constructor(app: App, onChange: BrowserChangeHandler, htmlRenderer?: Pick<ObsidianHtmlRenderService, "render">) {
     this.app = app;
@@ -57,8 +61,8 @@ class VaultBrowserService {
   }
 
   invalidate(): void {
-    if (this.invalidateTimer) clearTimeout(this.invalidateTimer);
-    this.invalidateTimer = setTimeout(() => {
+    if (this.invalidateTimer !== null) window.clearTimeout(this.invalidateTimer);
+    this.invalidateTimer = window.setTimeout(() => {
       this.invalidateTimer = null;
       this.applyInvalidation();
     }, 100);
@@ -99,7 +103,7 @@ class VaultBrowserService {
     return {
       path: file.path,
       name: file.name,
-      title: titleForFile(file, cache?.frontmatter as Record<string, unknown> | undefined),
+      title: titleForFile(file, recordValue(cache?.frontmatter)),
       folder: file.parent?.path === "/" ? "" : file.parent?.path || "",
       tags,
       mtime: file.stat.mtime,
@@ -167,7 +171,7 @@ class VaultBrowserService {
         docs.push({
           id: file.path,
           path: file.path,
-          title: titleForFile(file, cache?.frontmatter as Record<string, unknown> | undefined),
+          title: titleForFile(file, recordValue(cache?.frontmatter)),
           tags: (getAllTags(cache || {}) || []).join(" "),
           headings: (cache?.headings || []).map(item => item.heading).join(" "),
           content,
