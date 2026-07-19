@@ -36,15 +36,12 @@ function preservesIntrinsicGeometry(element: Pick<Element, "tagName" | "childEle
   });
 }
 
-function normalizeImageSizing(element: Pick<HTMLImageElement, "tagName" | "style" | "removeAttribute">): void {
+function normalizeImageSizing(element: Pick<HTMLImageElement, "tagName" | "removeAttribute" | "setCssProps" | "setCssStyles">): void {
   if (element.tagName.toUpperCase() !== "IMG") return;
   element.removeAttribute("width");
   element.removeAttribute("height");
-  for (const property of SNAPSHOT_GEOMETRY_PROPERTIES) element.style.removeProperty(property);
-  element.style.setProperty("max-width", "100%", "important");
-  element.style.setProperty("width", "auto", "important");
-  element.style.setProperty("height", "auto", "important");
-  element.style.setProperty("object-fit", "contain", "important");
+  element.setCssProps(Object.fromEntries(SNAPSHOT_GEOMETRY_PROPERTIES.map(property => [property, ""])));
+  element.setCssStyles({ maxWidth: "100%", width: "auto", height: "auto", objectFit: "contain" });
 }
 
 function snapshotRenderedHtml(container: HTMLElement): string {
@@ -58,12 +55,12 @@ function snapshotRenderedHtml(container: HTMLElement): string {
     const computed = window.getComputedStyle(source);
     for (const property of SNAPSHOT_STYLE_PROPERTIES) {
       const value = computed.getPropertyValue(property);
-      if (value) target.style.setProperty(property, value, computed.getPropertyPriority(property));
+      if (value) target.setCssProps({ [property]: value });
     }
     if (preservesIntrinsicGeometry(source, computed)) {
       for (const property of SNAPSHOT_GEOMETRY_PROPERTIES) {
         const value = computed.getPropertyValue(property);
-        if (value) target.style.setProperty(property, value, computed.getPropertyPriority(property));
+        if (value) target.setCssProps({ [property]: value });
       }
     }
     normalizeImageSizing(target as HTMLImageElement);

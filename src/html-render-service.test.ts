@@ -30,18 +30,24 @@ describe("Obsidian HTML snapshot", () => {
     const image = {
       tagName: "IMG",
       removeAttribute: (name: string) => removedAttributes.push(name),
-      style: {
-        removeProperty: (name: string) => properties.delete(name),
-        setProperty: (name: string, value: string, priority: string) => properties.set(name, `${value}!${priority}`),
+      setCssProps: (values: Record<string, string>) => {
+        for (const [name, value] of Object.entries(values)) {
+          if (value) properties.set(name, value);
+          else properties.delete(name);
+        }
+      },
+      setCssStyles: (values: Partial<CSSStyleDeclaration>) => {
+        const propertyNames: Record<string, string> = { maxWidth: "max-width", objectFit: "object-fit" };
+        for (const [name, value] of Object.entries(values)) properties.set(propertyNames[name] || name, String(value));
       },
     };
     normalizeImageSizing(image as never);
     expect(removedAttributes).toEqual(["width", "height"]);
     expect(Object.fromEntries(properties)).toMatchObject({
-      "max-width": "100%!important",
-      width: "auto!important",
-      height: "auto!important",
-      "object-fit": "contain!important",
+      "max-width": "100%",
+      width: "auto",
+      height: "auto",
+      "object-fit": "contain",
     });
     expect(properties.has("min-width")).toBe(false);
   });

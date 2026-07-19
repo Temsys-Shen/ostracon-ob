@@ -227,9 +227,8 @@ class OstraconInboxView extends ItemView {
       errEl.createSpan({ text: this.errorText });
       const retry = errEl.createEl("button", {
         text: "重新连接",
-        cls: "ostracon-empty-btn",
+        cls: "ostracon-empty-btn ostracon-retry-btn",
       });
-      retry.style.cssText = "margin-top:8px;display:inline-block";
       retry.addEventListener("click", () => this.doRetry());
       return;
     }
@@ -416,7 +415,7 @@ class OstraconInboxView extends ItemView {
 
     const dot = item.createSpan({ cls: "ostracon-card-dot" });
     if (card.colorIndex !== undefined) {
-      dot.style.background = MN_COLOR_HEX[card.colorIndex % MN_COLOR_HEX.length];
+      dot.setCssProps({ "--ostracon-card-color": MN_COLOR_HEX[card.colorIndex % MN_COLOR_HEX.length] });
     }
 
     item.createSpan({ cls: "ostracon-card-title", text: card.title || "(无标题)" });

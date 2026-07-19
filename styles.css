@@ -195,7 +195,7 @@
   height: 8px;
   border-radius: 99px;
   flex-shrink: 0;
-  background: var(--background-modifier-border);
+  background: var(--ostracon-card-color, var(--background-modifier-border));
 }
 
 .ostracon-card-title {
@@ -332,6 +332,7 @@
 .ostracon-empty-btn:hover {
   background: var(--interactive-accent-hover);
 }
+.ostracon-retry-btn { display: inline-block; margin-top: 8px; }
 
 /* ── Detail Modal ── */
 
@@ -506,7 +507,7 @@
 }
 .ostracon-settings-save-status.is-visible { opacity: 1; }
 .ostracon-settings-group { margin: 0 0 28px; }
-.ostracon-settings-group > h3 {
+.ostracon-settings-group > .setting-item-heading {
   margin: 0;
   padding: 0 0 8px;
   border-bottom: 1px solid var(--background-modifier-border);

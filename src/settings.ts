@@ -81,7 +81,7 @@ class OstraconSettingTab extends PluginSettingTab {
 
   private createGroup(container: HTMLElement, title: string): HTMLElement {
     const group = container.createDiv({ cls: "ostracon-settings-group" });
-    group.createEl("h3", { text: title });
+    new Setting(group).setName(title).setHeading();
     return group.createDiv({ cls: "ostracon-settings-rows" });
   }
 
