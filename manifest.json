@@ -1,9 +1,9 @@
 {
   "id": "ostracon-ob",
   "name": "Ostracon OB",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "minAppVersion": "1.5.0",
-  "description": "Connect Obsidian with MarginNote to import cards, send notes, and export vault documents as PDFs.",
+  "description": "Connect your vault with MarginNote to import cards, send notes, and export documents as PDFs.",
   "author": "Museday",
   "isDesktopOnly": true
 }
