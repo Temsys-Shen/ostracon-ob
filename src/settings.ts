@@ -175,8 +175,9 @@ class OstraconSettingTab extends PluginSettingTab {
     const status = this.createPanelHeader(container);
     const connection = this.createGroup(container, "连接");
     new Setting(connection).setName("主机").setDesc("监听地址").addText(text => {
-      text.setValue(this.plugin.settings.host).onChange(value => {
-        this.plugin.settings.host = value.trim() || DEFAULTS.host;
+      text.setValue(this.plugin.settings.host);
+      text.inputEl.addEventListener("change", () => {
+        this.plugin.settings.host = text.getValue().trim() || DEFAULTS.host;
         this.run(async () => { await this.save(status); await this.plugin.restartServer(); this.display(); }, "更新主机");
       });
     });
