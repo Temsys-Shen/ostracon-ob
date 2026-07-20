@@ -1,5 +1,4 @@
 import http from "http";
-import { randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   DEFAULTS, buildAckPayload,
