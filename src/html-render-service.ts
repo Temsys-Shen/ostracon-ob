@@ -23,6 +23,10 @@ const SNAPSHOT_STYLE_PROPERTIES = [
 const SNAPSHOT_GEOMETRY_PROPERTIES = ["width", "height", "min-width", "min-height", "max-width", "max-height"] as const;
 const INTRINSIC_GEOMETRY_TAGS = new Set(["SVG", "VIDEO", "CANVAS"]);
 const mathFontDataCache = new Map<string, Promise<string>>();
+type CssTarget = {
+  setCssProps: (properties: Record<string, string>) => void;
+  setCssStyles: (styles: Record<string, string>) => void;
+};
 
 function normalizePlainText(value: string | null): string {
   return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
@@ -45,7 +49,7 @@ function normalizeImageSizing(element: Pick<HTMLImageElement, "tagName" | "remov
   element.setCssStyles({ maxWidth: "100%", width: "auto", height: "auto", objectFit: "contain" });
 }
 
-function normalizeMermaidSizing(source: Element, target: Element): void {
+function normalizeMermaidSizing(source: Pick<Element, "tagName" | "closest">, target: CssTarget): void {
   if (source.tagName.toUpperCase() !== "SVG" || !source.closest(".mermaid")) return;
   target.setCssProps(Object.fromEntries(SNAPSHOT_GEOMETRY_PROPERTIES.map(property => [property, ""])));
   target.setCssStyles({ maxWidth: "100%", width: "auto", height: "auto" });

@@ -66,7 +66,7 @@ describe("Obsidian HTML snapshot", () => {
 
   test("keeps MathJax CHTML nodes out of computed-style flattening", () => {
     expect(isMathJaxElement({ tagName: "MJX-CONTAINER", closest: () => null } as never)).toBe(true);
-    expect(isMathJaxElement({ tagName: "MJX-MTABLE", closest: selector => selector === "mjx-container" ? {} : null } as never)).toBe(true);
+    expect(isMathJaxElement({ tagName: "MJX-MTABLE", closest: (selector: string) => selector === "mjx-container" ? {} : null } as never)).toBe(true);
     expect(isMathJaxElement({ tagName: "P", closest: () => null } as never)).toBe(false);
   });
 
