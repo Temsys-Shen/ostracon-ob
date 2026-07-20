@@ -33,8 +33,6 @@ type PendingClientRequest = {
   timer: number;
 };
 
-type PublishedPrintHtml = { url: string; release: () => void };
-
 function recordPayload(value: unknown): Record<string, unknown> {
   if (value === undefined || value === null) return {};
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("命令payload必须是对象");
@@ -93,7 +91,6 @@ class OstraconWsBridge {
   clientState: Map<WebSocket, ClientState>;
   clientAlive: WeakMap<WebSocket, boolean>;
   pendingClientRequests: Map<string, PendingClientRequest>;
-  printDocuments: Map<string, string>;
   started: boolean;
 
   constructor(plugin: BridgeHost) {
@@ -106,7 +103,6 @@ class OstraconWsBridge {
     this.clientState = new Map();
     this.clientAlive = new WeakMap();
     this.pendingClientRequests = new Map();
-    this.printDocuments = new Map();
     this.started = false;
   }
 
@@ -125,15 +121,6 @@ class OstraconWsBridge {
 
     await new Promise<void>((resolve, reject) => {
       const server = http.createServer((req, res) => {
-        const printHtml = this.getPrintDocument(req.method, req.url);
-        if (printHtml !== null) {
-          res.writeHead(200, {
-            "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-store",
-          });
-          res.end(printHtml);
-          return;
-        }
         // Discovery endpoint for MN to find OB instances on the LAN
         if (req.method === "GET" && req.url === "/ostracon/discover") {
           res.writeHead(200, {
@@ -185,7 +172,6 @@ class OstraconWsBridge {
     }
     this.clients.clear();
     this.clientState.clear();
-    this.printDocuments.clear();
     this.rejectPendingClientRequests(new Error("Ostracon server stopped"));
 
     if (this.wss) {
@@ -197,23 +183,6 @@ class OstraconWsBridge {
       await new Promise<void>((resolve) => this.httpServer?.close(() => resolve()));
       this.httpServer = null;
     }
-  }
-
-  publishPrintHtml(html: string): PublishedPrintHtml {
-    if (!this.isRunning) throw new Error("Ostracon连接服务未启动，无法加载PDF打印页面");
-    const token = randomUUID();
-    this.printDocuments.set(token, html);
-    return {
-      url: `http://127.0.0.1:${Number(this.plugin.settings.port)}/ostracon/pdf/${token}`,
-      release: () => { this.printDocuments.delete(token); },
-    };
-  }
-
-  private getPrintDocument(method: string | undefined, requestUrl: string | undefined): string | null {
-    if (method !== "GET" || !requestUrl) return null;
-    const match = /^\/ostracon\/pdf\/([0-9a-f-]+)$/.exec(requestUrl);
-    if (!match) return null;
-    return this.printDocuments.get(match[1]) ?? null;
   }
 
   async restart(): Promise<void> {

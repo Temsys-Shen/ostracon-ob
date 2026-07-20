@@ -8,6 +8,7 @@ declare module "electron" {
     }) => {
       loadURL(url: string): Promise<void>;
       webContents: {
+        executeJavaScript(code: string): Promise<unknown>;
         printToPDF(options: import("./pdf-print-settings").ElectronPdfOptions): Promise<Buffer>;
       };
       destroy(): void;

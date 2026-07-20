@@ -1,4 +1,4 @@
-import { App, Component, MarkdownRenderer } from "obsidian";
+import { App, Component, finishRenderMath, MarkdownRenderer } from "obsidian";
 
 const RENDER_QUIET_MS = 250;
 const RENDER_TIMEOUT_MS = 5000;
@@ -22,6 +22,7 @@ const SNAPSHOT_STYLE_PROPERTIES = [
 
 const SNAPSHOT_GEOMETRY_PROPERTIES = ["width", "height", "min-width", "min-height", "max-width", "max-height"] as const;
 const INTRINSIC_GEOMETRY_TAGS = new Set(["SVG", "VIDEO", "CANVAS"]);
+const mathFontDataCache = new Map<string, Promise<string>>();
 
 function normalizePlainText(value: string | null): string {
   return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
@@ -44,7 +45,80 @@ function normalizeImageSizing(element: Pick<HTMLImageElement, "tagName" | "remov
   element.setCssStyles({ maxWidth: "100%", width: "auto", height: "auto", objectFit: "contain" });
 }
 
-function snapshotRenderedHtml(container: HTMLElement): string {
+function normalizeMermaidSizing(source: Element, target: Element): void {
+  if (source.tagName.toUpperCase() !== "SVG" || !source.closest(".mermaid")) return;
+  target.setCssProps(Object.fromEntries(SNAPSHOT_GEOMETRY_PROPERTIES.map(property => [property, ""])));
+  target.setCssStyles({ maxWidth: "100%", width: "auto", height: "auto" });
+}
+
+type MathRenderContext = { sourcePath?: string };
+
+function dataUrlMimeType(url: string): string {
+  return /\.woff2(?:[?#]|$)/i.test(url) ? "font/woff2" : "font/woff";
+}
+
+function bytesToBase64(bytes: ArrayBuffer): string {
+  const values = new Uint8Array(bytes);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < values.length; offset += chunkSize) {
+    binary += String.fromCharCode(...values.subarray(offset, Math.min(offset + chunkSize, values.length)));
+  }
+  return btoa(binary);
+}
+
+function resolveMathFontUrl(rawUrl: string): string {
+  return new URL(rawUrl, document.baseURI).href;
+}
+
+async function inlineMathFontUrl(rawUrl: string, context: MathRenderContext): Promise<string> {
+  if (/^data:/i.test(rawUrl)) return rawUrl;
+  if (!/\.(?:woff2?|ttf|otf)(?:[?#]|$)/i.test(rawUrl)) return rawUrl;
+  const url = resolveMathFontUrl(rawUrl);
+  let pending = mathFontDataCache.get(url);
+  if (!pending) {
+    pending = (async () => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`MathJax字体读取失败: url=${url}, status=${response.status}`);
+      const base64 = bytesToBase64(await response.arrayBuffer());
+      return `data:${dataUrlMimeType(url)};base64,${base64}`;
+    })();
+    mathFontDataCache.set(url, pending);
+  }
+  try {
+    return await pending;
+  } catch (error) {
+    mathFontDataCache.delete(url);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`MathJax字体内联失败: sourcePath=${context.sourcePath || ""}, url=${url}: ${message}`);
+  }
+}
+
+async function inlineMathFontUrls(css: string, context: MathRenderContext): Promise<string> {
+  const matches = Array.from(css.matchAll(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi));
+  const replacements = await Promise.all(matches.map(async match => ({
+    raw: match[0],
+    value: await inlineMathFontUrl(match[2], context),
+  })));
+  let result = css;
+  for (const replacement of replacements) result = result.replace(replacement.raw, `url("${replacement.value}")`);
+  return result;
+}
+
+async function collectMathStyles(context: MathRenderContext = {}): Promise<string> {
+  const styles = Array.from(document.querySelectorAll("style"))
+    .map(style => String(style.textContent || ""))
+    .filter(text => /(?:mjx-container|MJX-CHTML|MathJax)/i.test(text));
+  if (styles.length === 0) return "";
+  const inlined = await Promise.all(styles.map(text => inlineMathFontUrls(text, context)));
+  return inlined.map(text => `<style data-ostracon-math="true">${text}</style>`).join("");
+}
+
+function isMathJaxElement(element: Element): boolean {
+  return element.tagName.toUpperCase() === "MJX-CONTAINER" || Boolean(element.closest("mjx-container"));
+}
+
+async function snapshotRenderedHtml(container: HTMLElement, context: MathRenderContext = {}): Promise<string> {
   const clonedNode = container.cloneNode(true);
   if (!(clonedNode instanceof HTMLElement)) throw new Error("Obsidian文档HTML快照根节点无效");
   const clone = clonedNode;
@@ -54,6 +128,7 @@ function snapshotRenderedHtml(container: HTMLElement): string {
   for (let index = 0; index < sources.length; index += 1) {
     const source = sources[index];
     const target = targets[index];
+    if (isMathJaxElement(source)) continue;
     const computed = window.getComputedStyle(source);
     for (const property of SNAPSHOT_STYLE_PROPERTIES) {
       const value = computed.getPropertyValue(property);
@@ -66,8 +141,9 @@ function snapshotRenderedHtml(container: HTMLElement): string {
       }
     }
     if (target instanceof HTMLImageElement) normalizeImageSizing(target);
+    normalizeMermaidSizing(source, target);
   }
-  return clone.innerHTML;
+  return `${await collectMathStyles(context)}${clone.innerHTML}`;
 }
 
 class ObsidianHtmlRenderService {
@@ -107,7 +183,9 @@ class ObsidianHtmlRenderService {
     try {
       await MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
       await this.waitForStableDom(container);
-      const renderedHtml = snapshotRenderedHtml(container);
+      await finishRenderMath();
+      await this.waitForStableDom(container);
+      const renderedHtml = await snapshotRenderedHtml(container, { sourcePath });
       const plainText = normalizePlainText(container.textContent);
       if (renderedHtml.trim() && !plainText) throw new Error("Obsidian文档HTML缺少可提取的纯文本");
       return {
@@ -122,4 +200,4 @@ class ObsidianHtmlRenderService {
   }
 }
 
-export { normalizeImageSizing, ObsidianHtmlRenderService, normalizePlainText, preservesIntrinsicGeometry, snapshotRenderedHtml };
+export { collectMathStyles, inlineMathFontUrls, isMathJaxElement, normalizeImageSizing, normalizeMermaidSizing, ObsidianHtmlRenderService, normalizePlainText, preservesIntrinsicGeometry, snapshotRenderedHtml };

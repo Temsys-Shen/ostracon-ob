@@ -8,6 +8,8 @@ class MarkdownRenderer {
   }
 }
 
+async function finishRenderMath(): Promise<void> {}
+
 function getAllTags(cache: { tagsRaw?: string[] }) {
   return cache.tagsRaw || [];
 }
@@ -16,4 +18,4 @@ function normalizePath(value: string) {
   return value.replace(/^\/+|\/+$/g, "");
 }
 
-export { Component, MarkdownRenderer, MarkdownView, Notice, TFile, getAllTags, normalizePath };
+export { Component, MarkdownRenderer, MarkdownView, Notice, TFile, finishRenderMath, getAllTags, normalizePath };

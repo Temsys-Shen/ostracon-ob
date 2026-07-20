@@ -84,7 +84,6 @@ class OstraconPlugin extends Plugin {
     this.pdfExportService = new PdfExportService(
       async (path) => this.loadPdfSource(path),
       () => this.settings.pdfPrint,
-      html => this.bridge.publishPrintHtml(html),
     );
     this.discovery = new OstraconDiscovery(this.settings.port, this.getVaultName(), error => {
       this.logLine("error", `mDNS发现服务失败: ${error.message}`);

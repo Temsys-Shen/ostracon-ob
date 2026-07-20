@@ -10,6 +10,7 @@ const PDF_CHUNK_BYTES = 12_000;
 type BrowserWindowLike = {
   loadURL: (url: string) => Promise<void>;
   webContents: {
+    executeJavaScript: (code: string) => Promise<unknown>;
     printToPDF: (options: ElectronPdfOptions) => Promise<Buffer>;
   };
   destroy: () => void;
@@ -36,8 +37,6 @@ type PdfExportSession = {
 
 type PdfSourceLoader = (path: string) => Promise<PdfSource>;
 type PdfPrintSettingsProvider = () => PdfPrintSettings;
-type PublishedPrintHtml = { url: string; release: () => void };
-type PrintHtmlPublisher = (html: string) => PublishedPrintHtml;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -68,7 +67,9 @@ ${pageRule}
 html, body { margin: 0; padding: 0; background: #fff; color: #111; }
 body { overflow-wrap: anywhere; word-break: break-word; }
 .ostracon-pdf-document { width: 100%; max-width: 100%; }
-.ostracon-pdf-document * { box-sizing: border-box; max-width: 100%; }
+.ostracon-pdf-document * { box-sizing: border-box; }
+.ostracon-pdf-document table,
+.ostracon-pdf-document pre { max-width: 100%; }
 .ostracon-pdf-document img,
 .ostracon-pdf-document canvas,
 .ostracon-pdf-document svg,
@@ -79,10 +80,22 @@ body { overflow-wrap: anywhere; word-break: break-word; }
   height: auto !important;
   object-fit: contain !important;
 }
+.ostracon-pdf-document .mermaid,
+.ostracon-pdf-document .mermaid svg {
+  max-width: 100% !important;
+}
+.ostracon-pdf-document .mermaid svg {
+  width: auto !important;
+  height: auto !important;
+}
 </style>
 </head>
 <body><main class="ostracon-pdf-document markdown-rendered">${source.renderedHtml}</main></body>
 </html>`;
+}
+
+function injectHtmlScript(html: string): string {
+  return `document.open();document.write(${JSON.stringify(html)});document.close();`;
 }
 
 function defaultBrowserWindowConstructor(): BrowserWindowConstructor {
@@ -92,19 +105,16 @@ function defaultBrowserWindowConstructor(): BrowserWindowConstructor {
 class PdfExportService {
   private readonly loadSource: PdfSourceLoader;
   private readonly getPrintSettings: PdfPrintSettingsProvider;
-  private readonly publishPrintHtml: PrintHtmlPublisher;
   private readonly BrowserWindow: BrowserWindowConstructor;
   private readonly sessions = new Map<string, PdfExportSession>();
 
   constructor(
     loadSource: PdfSourceLoader,
     getPrintSettings: PdfPrintSettingsProvider = createDefaultPdfPrintSettings,
-    publishPrintHtml: PrintHtmlPublisher,
     BrowserWindow = defaultBrowserWindowConstructor(),
   ) {
     this.loadSource = loadSource;
     this.getPrintSettings = getPrintSettings;
-    this.publishPrintHtml = publishPrintHtml;
     this.BrowserWindow = BrowserWindow;
   }
 
@@ -124,18 +134,17 @@ class PdfExportService {
       webPreferences: { offscreen: true },
     });
     let data: Buffer;
-    let publishedHtml: PublishedPrintHtml | null = null;
     try {
       const settings = this.getPrintSettings();
       const html = buildPrintHtml(source, settings);
-      publishedHtml = this.publishPrintHtml(html);
-      await window.loadURL(publishedHtml.url);
+      await window.loadURL("about:blank");
+      await window.webContents.executeJavaScript(injectHtmlScript(html));
+      await window.webContents.executeJavaScript("document.fonts ? document.fonts.ready : Promise.resolve()");
       data = await window.webContents.printToPDF(buildElectronPdfOptions(settings));
     } catch (error) {
       throw new Error(`Electron生成PDF失败: ${normalizedPath}: ${errorMessage(error)}`);
     } finally {
       window.destroy();
-      publishedHtml?.release();
     }
 
     if (data.length <= 0) throw new Error(`Electron生成的PDF为空: ${normalizedPath}`);
@@ -175,4 +184,4 @@ class PdfExportService {
   }
 }
 
-export { buildPrintHtml, normalizePdfFileName, PdfExportService };
+export { buildPrintHtml, injectHtmlScript, normalizePdfFileName, PdfExportService };
