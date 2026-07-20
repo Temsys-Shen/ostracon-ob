@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { collectMathStyles, inlineMathFontUrls, isMathJaxElement, normalizeImageSizing, normalizeMermaidSizing, normalizePlainText, preservesIntrinsicGeometry } from "./html-render-service";
+import { collectMathStyles, inlineMathFontUrls, isMathJaxElement, normalizeImageSizing, normalizeMermaidSizing, normalizePlainText, preservesIntrinsicGeometry, serializeStyleElement } from "./html-render-service";
 
 function computed(values: Record<string, string>) {
   return { getPropertyValue: (property: string) => values[property] || "" };
@@ -11,18 +11,39 @@ describe("Obsidian HTML snapshot", () => {
     globalThis.document = {
       baseURI: "app://obsidian.md/",
       querySelectorAll: () => [
-        { textContent: ".mjx-container{display:inline-block}" },
-        { textContent: ".markdown-preview{color:red}" },
+        {
+          textContent: ".mjx-container{display:inline-block}",
+          sheet: { cssRules: [
+            { cssText: ".mjx-container { display: inline-block; }" },
+            { cssText: 'mjx-c.mjx-c3F::before { content: "?"; padding: 0.705em 0.472em 0 0; }' },
+          ] },
+        },
+        { textContent: ".markdown-preview{color:red}", sheet: null },
       ],
     } as never;
     try {
       const result = await collectMathStyles();
       expect(result).toContain('data-ostracon-math="true"');
-      expect(result).toContain(".mjx-container{display:inline-block}");
+      expect(result).toContain(".mjx-container { display: inline-block; }");
+      expect(result).toContain("mjx-c.mjx-c3F::before");
       expect(result).not.toContain("markdown-preview");
     } finally {
       globalThis.document = previousDocument;
     }
+  });
+
+  test("serializes dynamically inserted MathJax glyph rules from CSSOM", () => {
+    const style = {
+      textContent: ".mjx-container{display:block}",
+      sheet: { cssRules: [
+        { cssText: ".mjx-container { display: block; }" },
+        { cssText: 'mjx-c.mjx-c32::before { content: "2"; }' },
+        { cssText: 'mjx-c.mjx-c1D434.TEX-I::before { content: "A"; }' },
+      ] },
+    };
+    const result = serializeStyleElement(style as never);
+    expect(result).toContain("mjx-c.mjx-c32::before");
+    expect(result).toContain("mjx-c.mjx-c1D434.TEX-I::before");
   });
 
   test("inlines MathJax fonts and reuses the font cache", async () => {

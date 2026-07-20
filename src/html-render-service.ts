@@ -109,9 +109,15 @@ async function inlineMathFontUrls(css: string, context: MathRenderContext): Prom
   return result;
 }
 
+function serializeStyleElement(style: HTMLStyleElement): string {
+  const rules = style.sheet ? Array.from(style.sheet.cssRules) : [];
+  if (rules.length > 0) return rules.map(rule => rule.cssText).join("\n");
+  return String(style.textContent || "");
+}
+
 async function collectMathStyles(context: MathRenderContext = {}): Promise<string> {
   const styles = Array.from(document.querySelectorAll("style"))
-    .map(style => String(style.textContent || ""))
+    .map(serializeStyleElement)
     .filter(text => /(?:mjx-container|MJX-CHTML|MathJax)/i.test(text));
   if (styles.length === 0) return "";
   const inlined = await Promise.all(styles.map(text => inlineMathFontUrls(text, context)));
@@ -204,4 +210,4 @@ class ObsidianHtmlRenderService {
   }
 }
 
-export { collectMathStyles, inlineMathFontUrls, isMathJaxElement, normalizeImageSizing, normalizeMermaidSizing, ObsidianHtmlRenderService, normalizePlainText, preservesIntrinsicGeometry, snapshotRenderedHtml };
+export { collectMathStyles, inlineMathFontUrls, isMathJaxElement, normalizeImageSizing, normalizeMermaidSizing, ObsidianHtmlRenderService, normalizePlainText, preservesIntrinsicGeometry, serializeStyleElement, snapshotRenderedHtml };
