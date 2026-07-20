@@ -22,7 +22,7 @@ import { QuoteService } from "./quote-service";
 import type { QuoteInsertRequest, QuoteInsertResult, QuoteTargetContext } from "./contract";
 import { CardDropService } from "./card-drop-service";
 import { PdfExportService } from "./pdf-export-service";
-import { resolveConnectionUrl } from "./connection-address";
+import { resolveConfiguredConnectionUrl } from "./connection-address";
 
 interface OstraconPluginState {
   packets: OstraconPacketRecord[];
@@ -46,7 +46,7 @@ function hasPacket(value: unknown): value is { packet: OstraconPacket } {
 }
 
 function isInboxView(view: View): view is OstraconInboxView {
-  return view.getViewType() === VIEW_TYPE_INBOX;
+  return view.getViewType() === VIEW_TYPE_INBOX && typeof (view as unknown as Partial<OstraconInboxView>).render === "function";
 }
 
 type StatusBarItem = ReturnType<Plugin["addStatusBarItem"]>;
@@ -209,7 +209,7 @@ class OstraconPlugin extends Plugin {
   }
 
   resolveConnectionUrl(): Promise<string> {
-    return resolveConnectionUrl(this.settings.port);
+    return resolveConfiguredConnectionUrl(this.settings.host, this.settings.port);
   }
 
   isServerRunning(): boolean {

@@ -3,6 +3,7 @@ import type { Socket } from "node:dgram";
 import { describe, expect, test, vi } from "vitest";
 import {
   resolveConnectionUrl,
+  resolveConfiguredConnectionUrl,
   resolveDefaultRouteIpv4,
   resolveDefaultRouteIpv6,
   type ConnectionAddressDependencies,
@@ -20,6 +21,10 @@ function createUdpSocket(address: string, error?: Error) {
 }
 
 describe("connection address resolver", () => {
+  test("uses an explicit listener address", async () => {
+    await expect(resolveConfiguredConnectionUrl("192.168.3.168", 27123)).resolves.toBe("ws://192.168.3.168:27123");
+  });
+
   test("prefers the local IPv6 address selected by the system default route", async () => {
     const socket = createUdpSocket("2001:db8::10");
     const createSocket = vi.fn().mockReturnValue(socket) as unknown as NonNullable<ConnectionAddressDependencies["createSocket"]>;
@@ -39,6 +44,16 @@ describe("connection address resolver", () => {
     await expect(resolveConnectionUrl(28123, { createSocket })).resolves.toBe("ws://192.168.50.12:28123");
     expect(createSocket).toHaveBeenNthCalledWith(1, "udp6");
     expect(createSocket).toHaveBeenNthCalledWith(2, "udp4");
+  });
+
+  test("falls back to IPv4 when the IPv6 route resolves to a ULA", async () => {
+    const ipv6Socket = createUdpSocket("fd00::10");
+    const ipv4Socket = createUdpSocket("192.168.3.168");
+    const createSocket = vi.fn()
+      .mockImplementationOnce(() => ipv6Socket)
+      .mockImplementationOnce(() => ipv4Socket) as unknown as NonNullable<ConnectionAddressDependencies["createSocket"]>;
+
+    await expect(resolveConnectionUrl(27123, { createSocket })).resolves.toBe("ws://192.168.3.168:27123");
   });
 
   test("rejects IPv6 loopback", async () => {

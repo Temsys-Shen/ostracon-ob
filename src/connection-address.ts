@@ -11,6 +11,17 @@ type ConnectionAddressDependencies = {
   createSocket?: UdpSocketFactory;
 };
 
+function isPublicIpv6(address: string): boolean {
+  const normalized = address.toLowerCase();
+  return !normalized.startsWith("::")
+    && !normalized.startsWith("fc")
+    && !normalized.startsWith("fd")
+    && !normalized.startsWith("fe8")
+    && !normalized.startsWith("fe9")
+    && !normalized.startsWith("fea")
+    && !normalized.startsWith("feb");
+}
+
 function resolveDefaultRouteAddress(
   socketType: "udp4" | "udp6",
   target: string,
@@ -43,6 +54,10 @@ function resolveDefaultRouteAddress(
         finish(new Error("系统默认路由返回了IPv6回环地址"));
         return;
       }
+      if (expectedFamily === 6 && !isPublicIpv6(local.address)) {
+        finish(new Error(`系统默认路由返回了非公网IPv6地址: ${local.address}`));
+        return;
+      }
       finish(undefined, local.address);
     });
   });
@@ -73,5 +88,20 @@ async function resolveConnectionUrl(port: number, dependencies: ConnectionAddres
   }
 }
 
-export { resolveConnectionUrl, resolveDefaultRouteIpv4, resolveDefaultRouteIpv6 };
+function formatConnectionUrl(host: string, port: number): string {
+  const clean = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  const hostPart = clean.includes(":") ? `[${clean}]` : clean;
+  return `ws://${hostPart}:${port}`;
+}
+
+async function resolveConfiguredConnectionUrl(
+  host: string,
+  port: number,
+  dependencies: ConnectionAddressDependencies = {},
+): Promise<string> {
+  if (host !== "0.0.0.0" && host !== "::") return formatConnectionUrl(host, port);
+  return resolveConnectionUrl(port, dependencies);
+}
+
+export { resolveConnectionUrl, resolveConfiguredConnectionUrl, resolveDefaultRouteIpv4, resolveDefaultRouteIpv6 };
 export type { ConnectionAddressDependencies };
