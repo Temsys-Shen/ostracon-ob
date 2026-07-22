@@ -10,7 +10,8 @@ const PACKET_VERSION = 1;
 const DEFAULT_OUTPUT_FOLDER = "Marginnote";
 const DEFAULT_PORT = 27123;
 const LEGACY_DEFAULT_CARD_TEMPLATE = "{{heading}} {{title|link}}\n\n{{content}}";
-const DEFAULT_CARD_TEMPLATE = "{{heading}} [{{title}}]({{link}})\n\n{{content}}";
+const TITLE_LINK_DEFAULT_CARD_TEMPLATE = "{{heading}} [{{title}}]({{link}})\n\n{{content}}";
+const DEFAULT_CARD_TEMPLATE = "{{heading}} {{title}}{{#link}} [<img src=\"https://www.marginnote.com.cn/assets/logo.png\" width=\"20\">]({{link}}){{/link}}\n\n{{content}}";
 
 // 广播事件名。与 ostracon-mn/web/src/lib/events.js 保持一致（人工同步）。
 const VAULT_INDEX_CHANGED_EVENT = "vaultIndexChanged";
@@ -329,11 +330,12 @@ function buildConnectionUrl(settings: Pick<OstraconSettings, "host" | "port">): 
   return `ws://${hostPart}:${port}`;
 }
 
-function buildHelloPayload(settings: Pick<OstraconSettings, "outputFolder">, vaultName?: string) {
+function buildHelloPayload(settings: Pick<OstraconSettings, "outputFolder" | "cardTemplate">, vaultName?: string) {
   return {
     protocolVersion: PROTOCOL_VERSION, pluginId: PLUGIN_ID,
     serverTime: nowIso(), capabilities: ["hello", "ping", "pong", "event", "command", "command_result", "ack", "error"],
     outputFolder: settings.outputFolder || DEFAULT_OUTPUT_FOLDER,
+    cardTemplate: settings.cardTemplate,
     vaultName: vaultName || "",
   };
 }
@@ -347,7 +349,7 @@ function fileExtensionForFormat(f?: string): ".md" | ".canvas" {
 }
 
 export {
-  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT, DEFAULT_QUOTE_TEMPLATE, LEGACY_DEFAULT_CARD_TEMPLATE, DEFAULT_CARD_TEMPLATE,
+  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT, DEFAULT_QUOTE_TEMPLATE, LEGACY_DEFAULT_CARD_TEMPLATE, TITLE_LINK_DEFAULT_CARD_TEMPLATE, DEFAULT_CARD_TEMPLATE,
   VAULT_INDEX_CHANGED_EVENT, QUOTE_CONTEXT_CHANGED_EVENT,
   nowIso, sanitizeSegment, normalizeTags, createId,
   createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath, findAvailablePacketFilePath, fileExtensionForFormat,

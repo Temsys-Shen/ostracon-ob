@@ -1,6 +1,6 @@
 import { Notice, Plugin, normalizePath, type View } from "obsidian";
 import {
-  VIEW_TYPE_INBOX, DEFAULT_OUTPUT_FOLDER, DEFAULT_CARD_TEMPLATE, LEGACY_DEFAULT_CARD_TEMPLATE, createDefaultSettings, normalizePacket,
+  VIEW_TYPE_INBOX, DEFAULT_OUTPUT_FOLDER, DEFAULT_CARD_TEMPLATE, LEGACY_DEFAULT_CARD_TEMPLATE, TITLE_LINK_DEFAULT_CARD_TEMPLATE, createDefaultSettings, normalizePacket,
   buildPacketRecord, buildConnectionUrl,
   findAvailablePacketFilePath,
   createId,
@@ -67,7 +67,9 @@ class OstraconPlugin extends Plugin {
   async onload(): Promise<void> {
     const saved = parseSavedPluginData(await this.loadData());
     this.settings = Object.assign(createDefaultSettings(), saved?.settings ?? {});
-    if (this.settings.cardTemplate === LEGACY_DEFAULT_CARD_TEMPLATE) this.settings.cardTemplate = DEFAULT_CARD_TEMPLATE;
+    if (this.settings.cardTemplate === LEGACY_DEFAULT_CARD_TEMPLATE || this.settings.cardTemplate === TITLE_LINK_DEFAULT_CARD_TEMPLATE) {
+      this.settings.cardTemplate = DEFAULT_CARD_TEMPLATE;
+    }
 
     this.state = {
       packets: Array.isArray(saved?.packets) ? saved.packets : [],

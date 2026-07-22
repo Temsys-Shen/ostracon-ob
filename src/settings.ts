@@ -420,7 +420,7 @@ class OstraconSettingTab extends PluginSettingTab {
     });
     const cardPanel = this.createTemplatePanel(panels, {
       name: "卡片模板", initial: this.plugin.settings.cardTemplate, defaultValue: DEFAULT_CARD_TEMPLATE,
-      tokens: ["{{heading}}", "{{title}}", "{{link}}", "{{content}}", "|trim", "|singleline"],
+      tokens: ["{{heading}}", "{{title}}", "{{link}}", "{{#link}}{{/link}}", "{{content}}", "|trim", "|singleline"],
       context: { heading: "##", title: "示例卡片", content: "示例正文", link: "marginnote4app://note/example" },
       save: value => { this.plugin.settings.cardTemplate = value; }, quoteToggle: false, saveStatus,
     });

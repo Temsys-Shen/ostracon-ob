@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { buildHelloPayload, buildPacketFilePath, createDefaultSettings, findAvailablePacketFilePath, normalizePacket, PROTOCOL_VERSION, type BridgeHost, type OstraconPacket } from "./contract";
+import { buildHelloPayload, buildPacketFilePath, createDefaultSettings, DEFAULT_CARD_TEMPLATE, findAvailablePacketFilePath, normalizePacket, PROTOCOL_VERSION, type BridgeHost, type OstraconPacket } from "./contract";
 import { WebSocket } from "ws";
 import { OstraconWsBridge } from "./ws-bridge";
 
@@ -60,11 +60,13 @@ function createHost() {
 
 describe("Ostracon protocol", () => {
   test("advertises protocol 4 command responses", () => {
-    const hello = buildHelloPayload(createDefaultSettings(), "Vault");
+    const settings = createDefaultSettings();
+    const hello = buildHelloPayload(settings, "Vault");
     expect(PROTOCOL_VERSION).toBe(4);
     expect(hello.capabilities).toContain("command_result");
     expect(hello.capabilities).not.toContain("sync" + "_request");
     expect(hello.capabilities).not.toContain("sync" + "_result");
+    expect(hello.cardTemplate).toBe(DEFAULT_CARD_TEMPLATE);
   });
 
   test("accepts a plain submitPacket payload", async () => {
