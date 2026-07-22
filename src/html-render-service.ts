@@ -128,6 +128,10 @@ function isMathJaxElement(element: Element): boolean {
   return element.tagName.toUpperCase() === "MJX-CONTAINER" || Boolean(element.closest("mjx-container"));
 }
 
+function containsRenderedMath(container: Pick<Element, "querySelector">): boolean {
+  return Boolean(container.querySelector("mjx-container, .math"));
+}
+
 async function snapshotRenderedHtml(container: HTMLElement, context: MathRenderContext = {}): Promise<string> {
   const clonedNode = container.cloneNode(true);
   if (!(clonedNode instanceof HTMLElement)) throw new Error("Obsidian文档HTML快照根节点无效");
@@ -153,7 +157,8 @@ async function snapshotRenderedHtml(container: HTMLElement, context: MathRenderC
     if (target instanceof HTMLImageElement) normalizeImageSizing(target);
     normalizeMermaidSizing(source, target);
   }
-  return `${await collectMathStyles(context)}${clone.innerHTML}`;
+  const mathStyles = containsRenderedMath(clone) ? await collectMathStyles(context) : "";
+  return `${mathStyles}${clone.innerHTML}`;
 }
 
 class ObsidianHtmlRenderService {
@@ -193,8 +198,10 @@ class ObsidianHtmlRenderService {
     try {
       await MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
       await this.waitForStableDom(container);
-      await finishRenderMath();
-      await this.waitForStableDom(container);
+      if (containsRenderedMath(container)) {
+        await finishRenderMath();
+        await this.waitForStableDom(container);
+      }
       const renderedHtml = await snapshotRenderedHtml(container, { sourcePath });
       const plainText = normalizePlainText(container.textContent);
       if (renderedHtml.trim() && !plainText) throw new Error("Obsidian文档HTML缺少可提取的纯文本");
@@ -210,4 +217,4 @@ class ObsidianHtmlRenderService {
   }
 }
 
-export { collectMathStyles, inlineMathFontUrls, isMathJaxElement, normalizeImageSizing, normalizeMermaidSizing, ObsidianHtmlRenderService, normalizePlainText, preservesIntrinsicGeometry, serializeStyleElement, snapshotRenderedHtml };
+export { collectMathStyles, containsRenderedMath, inlineMathFontUrls, isMathJaxElement, normalizeImageSizing, normalizeMermaidSizing, ObsidianHtmlRenderService, normalizePlainText, preservesIntrinsicGeometry, serializeStyleElement, snapshotRenderedHtml };

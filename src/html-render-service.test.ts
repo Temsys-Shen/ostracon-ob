@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { collectMathStyles, inlineMathFontUrls, isMathJaxElement, normalizeImageSizing, normalizeMermaidSizing, normalizePlainText, preservesIntrinsicGeometry, serializeStyleElement } from "./html-render-service";
+import { collectMathStyles, containsRenderedMath, inlineMathFontUrls, isMathJaxElement, normalizeImageSizing, normalizeMermaidSizing, normalizePlainText, preservesIntrinsicGeometry, serializeStyleElement } from "./html-render-service";
 
 function computed(values: Record<string, string>) {
   return { getPropertyValue: (property: string) => values[property] || "" };
@@ -89,6 +89,11 @@ describe("Obsidian HTML snapshot", () => {
     expect(isMathJaxElement({ tagName: "MJX-CONTAINER", closest: () => null } as never)).toBe(true);
     expect(isMathJaxElement({ tagName: "MJX-MTABLE", closest: (selector: string) => selector === "mjx-container" ? {} : null } as never)).toBe(true);
     expect(isMathJaxElement({ tagName: "P", closest: () => null } as never)).toBe(false);
+  });
+
+  test("waits for MathJax only when the rendered document contains math", () => {
+    expect(containsRenderedMath({ querySelector: () => null } as never)).toBe(false);
+    expect(containsRenderedMath({ querySelector: (selector: string) => selector === "mjx-container, .math" ? {} : null } as never)).toBe(true);
   });
 
   test("extracts plain text independently from element visibility", () => {

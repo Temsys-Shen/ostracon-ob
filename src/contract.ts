@@ -160,7 +160,7 @@ export interface BridgeHost {
   ingestPacket: (packet: OstraconPacket, meta?: OstraconRecordMeta) => Promise<OstraconPacketRecord>;
   logLine: (level: string, message: string) => void;
   getVaultName: () => string;
-  settings: Pick<OstraconSettings, "port" | "host" | "outputFolder">;
+  settings: Pick<OstraconSettings, "port" | "host" | "outputFolder" | "cardTemplate">;
   isDeviceApproved: (clientId: string) => boolean;
   approveDevice: (clientId: string, name: string) => void;
   requestApproval: (clientId: string, name: string, callbacks: { onApprove: () => void; onDeny: () => void }) => void;
