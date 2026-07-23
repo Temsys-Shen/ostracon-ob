@@ -1,5 +1,5 @@
 const DEFAULT_QUOTE_TEMPLATE = `{{content|trim|blockquote}}
-{{#link}}>
+{{#link}}
 > [MarginNote]({{link}}){{/link}}`;
 
 type QuoteTemplateContext = {

@@ -5,7 +5,8 @@ import { createDefaultPdfPrintSettings, type PdfPrintSettings } from "./pdf-prin
 
 const PLUGIN_ID = "ostracon-ob";
 const VIEW_TYPE_INBOX = "ostracon-inbox-view";
-const PROTOCOL_VERSION = 4;
+const PROTOCOL_VERSION = 5;
+const OPEN_MARGIN_NOTE_URL_CAPABILITY = "open_marginnote_url";
 const PACKET_VERSION = 1;
 const DEFAULT_OUTPUT_FOLDER = "Marginnote";
 const DEFAULT_PORT = 27123;
@@ -333,7 +334,7 @@ function buildConnectionUrl(settings: Pick<OstraconSettings, "host" | "port">): 
 function buildHelloPayload(settings: Pick<OstraconSettings, "outputFolder" | "cardTemplate">, vaultName?: string) {
   return {
     protocolVersion: PROTOCOL_VERSION, pluginId: PLUGIN_ID,
-    serverTime: nowIso(), capabilities: ["hello", "ping", "pong", "event", "command", "command_result", "ack", "error"],
+    serverTime: nowIso(), capabilities: ["hello", "ping", "pong", "event", "command", "command_result", "ack", "error", OPEN_MARGIN_NOTE_URL_CAPABILITY],
     outputFolder: settings.outputFolder || DEFAULT_OUTPUT_FOLDER,
     cardTemplate: settings.cardTemplate,
     vaultName: vaultName || "",
@@ -349,7 +350,7 @@ function fileExtensionForFormat(f?: string): ".md" | ".canvas" {
 }
 
 export {
-  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT, DEFAULT_QUOTE_TEMPLATE, LEGACY_DEFAULT_CARD_TEMPLATE, TITLE_LINK_DEFAULT_CARD_TEMPLATE, DEFAULT_CARD_TEMPLATE,
+  PLUGIN_ID, VIEW_TYPE_INBOX, PROTOCOL_VERSION, PACKET_VERSION, OPEN_MARGIN_NOTE_URL_CAPABILITY, DEFAULTS, DEFAULT_OUTPUT_FOLDER, DEFAULT_PORT, DEFAULT_QUOTE_TEMPLATE, LEGACY_DEFAULT_CARD_TEMPLATE, TITLE_LINK_DEFAULT_CARD_TEMPLATE, DEFAULT_CARD_TEMPLATE,
   VAULT_INDEX_CHANGED_EVENT, QUOTE_CONTEXT_CHANGED_EVENT,
   nowIso, sanitizeSegment, normalizeTags, createId,
   createDefaultSettings, normalizePacket, summarizePacket, buildPacketFilePath, findAvailablePacketFilePath, fileExtensionForFormat,

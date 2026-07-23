@@ -1,6 +1,6 @@
 {
   "name": "ostracon-ob",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "main": "main.js",
   "private": true,
   "scripts": {
@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@codemirror/view": "6.38.6",
     "@eslint/js": "^9.39.4",
     "@types/multicast-dns": "^7.2.4",
     "@types/node": "^22.15.17",

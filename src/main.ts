@@ -23,6 +23,8 @@ import type { QuoteInsertRequest, QuoteInsertResult, QuoteTargetContext } from "
 import { CardDropService } from "./card-drop-service";
 import { PdfExportService } from "./pdf-export-service";
 import { resolveConfiguredConnectionUrl } from "./connection-address";
+import { MarginNoteUrlRouter, findMarginNoteUrlFromClick } from "./margin-note-url-router";
+import { createMarginNoteEditorLinkExtension } from "./margin-note-editor-link";
 
 interface OstraconPluginState {
   packets: OstraconPacketRecord[];
@@ -63,6 +65,7 @@ class OstraconPlugin extends Plugin {
   quoteService!: QuoteService;
   cardDropService!: CardDropService;
   pdfExportService!: PdfExportService;
+  marginNoteUrlRouter!: MarginNoteUrlRouter;
 
   async onload(): Promise<void> {
     const saved = parseSavedPluginData(await this.loadData());
@@ -78,6 +81,8 @@ class OstraconPlugin extends Plugin {
 
     this.fileService = new FileService(this.app, this.mutex, this.settings.autoConvertBase64);
     this.bridge = new OstraconWsBridge(this);
+    this.marginNoteUrlRouter = new MarginNoteUrlRouter(this.bridge);
+    this.registerEditorExtension(createMarginNoteEditorLinkExtension(url => this.openMarginNoteUrl(url)));
     this.quoteService = new QuoteService(this);
     this.cardDropService = new CardDropService(this);
     this.vaultBrowser = new VaultBrowserService(this.app, (revision) => {
@@ -110,6 +115,16 @@ class OstraconPlugin extends Plugin {
     this.registerDomEvent(this.app.workspace.containerEl, "dragover", (event) => {
       this.cardDropService.handleDragOver(event);
     });
+    this.registerDomEvent(document, "click", (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".cm-content")) return;
+      const url = findMarginNoteUrlFromClick(event);
+      if (!url) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      this.openMarginNoteUrl(url);
+    }, { capture: true });
 
     // 推送引文上下文变化事件，MN 端不再需要 1.5s 轮询 getQuoteContext。
     // active-leaf-change 覆盖切叶子（切文件/切视图模式/切到设置页），file-open 覆盖活动文件变化。
@@ -140,6 +155,16 @@ class OstraconPlugin extends Plugin {
 
     this.app.workspace.onLayoutReady(() => { this.refreshViews(); });
     this.logLine("info", "plugin loaded");
+  }
+
+  private openMarginNoteUrl(url: string): void {
+    void this.marginNoteUrlRouter.open(url).then(result => {
+      if (result.target === "connected-mn") new Notice("已在连接的MarginNote中打开");
+    }).catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logLine("error", `打开MarginNote链接失败: ${message}`);
+      new Notice(`打开MarginNote链接失败: ${message}`);
+    });
   }
 
   onunload(): void {

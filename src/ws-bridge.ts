@@ -5,6 +5,7 @@ import {
   buildHelloPayload,
   buildConnectionUrl,
   PROTOCOL_VERSION,
+  OPEN_MARGIN_NOTE_URL_CAPABILITY,
   createId,
   normalizePacket,
   nowIso,
@@ -19,6 +20,8 @@ type ClientState = {
   clientId: string;
   connectedAt: string;
   lastSeenAt: string;
+  handshakeComplete: boolean;
+  capabilities: Set<string>;
 };
 
 type CachedFrames = {
@@ -267,6 +270,8 @@ class OstraconWsBridge {
         clientId: effectiveClientId,
         connectedAt: nowIso(),
         lastSeenAt: nowIso(),
+        handshakeComplete: false,
+        capabilities: new Set(),
       };
 
       this.clients.add(ws);
@@ -408,6 +413,12 @@ class OstraconWsBridge {
           ws.close(4002, errorMessage);
           return;
         }
+        client.handshakeComplete = true;
+        client.capabilities = new Set(
+          Array.isArray(payload.capabilities)
+            ? payload.capabilities.filter((item): item is string => typeof item === "string")
+            : [],
+        );
         enqueue({
           type: "hello",
           requestId: message.requestId || `hello-${client.clientId}`,
@@ -583,6 +594,12 @@ class OstraconWsBridge {
   requestClientCommand(command: string, payload: unknown = {}, timeoutMs = 12000): Promise<unknown> {
     const ws = this.getActiveClient();
     const state = this.clientState.get(ws);
+    if (command === "openMarginNoteUrl") {
+      if (!state?.handshakeComplete) throw new Error("MarginNote连接尚未完成握手");
+      if (!state.capabilities.has(OPEN_MARGIN_NOTE_URL_CAPABILITY)) {
+        throw new Error("连接的MarginNote插件不支持远程打开，请更新MN端插件");
+      }
+    }
     const requestId = createId(command);
 
     return new Promise((resolve, reject) => {

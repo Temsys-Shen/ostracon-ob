@@ -16,7 +16,7 @@ const context = await esbuild.context({
   },
   entryPoints: ["src/main.ts"],
   bundle: true,
-  external: ["obsidian", "electron", ...builtinModules],
+  external: ["obsidian", "electron", "@codemirror/view", ...builtinModules],
   format: "cjs",
   target: "es2021",
   platform: "node",

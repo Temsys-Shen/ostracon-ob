@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { buildHelloPayload, buildPacketFilePath, createDefaultSettings, DEFAULT_CARD_TEMPLATE, findAvailablePacketFilePath, normalizePacket, PROTOCOL_VERSION, type BridgeHost, type OstraconPacket } from "./contract";
+import { buildHelloPayload, buildPacketFilePath, createDefaultSettings, DEFAULT_CARD_TEMPLATE, findAvailablePacketFilePath, normalizePacket, OPEN_MARGIN_NOTE_URL_CAPABILITY, PROTOCOL_VERSION, type BridgeHost, type OstraconPacket } from "./contract";
 import { WebSocket } from "ws";
 import { OstraconWsBridge } from "./ws-bridge";
 
@@ -59,14 +59,59 @@ function createHost() {
 }
 
 describe("Ostracon protocol", () => {
-  test("advertises protocol 4 command responses", () => {
+  test("advertises protocol 5 remote MarginNote URL opening", () => {
     const settings = createDefaultSettings();
     const hello = buildHelloPayload(settings, "Vault");
-    expect(PROTOCOL_VERSION).toBe(4);
+    expect(PROTOCOL_VERSION).toBe(5);
     expect(hello.capabilities).toContain("command_result");
+    expect(hello.capabilities).toContain(OPEN_MARGIN_NOTE_URL_CAPABILITY);
     expect(hello.capabilities).not.toContain("sync" + "_request");
     expect(hello.capabilities).not.toContain("sync" + "_result");
     expect(hello.cardTemplate).toBe(DEFAULT_CARD_TEMPLATE);
+  });
+
+  test("rejects protocol 4 clients", async () => {
+    const bridge = new OstraconWsBridge(createHost());
+    const ws = { close: vi.fn(), send: vi.fn(), readyState: WebSocket.OPEN } as unknown as WebSocket;
+    const client = {
+      ws,
+      clientId: "client-1",
+      connectedAt: "2026-07-24T00:00:00.000Z",
+      lastSeenAt: "2026-07-24T00:00:00.000Z",
+      handshakeComplete: false,
+      capabilities: new Set<string>(),
+    };
+
+    await bridge.handleMessage(ws, client, {
+      type: "hello",
+      requestId: "hello-old",
+      payload: { protocolVersion: 4, pluginId: "ostracon-mn", capabilities: [] },
+    });
+
+    expect(ws.close).toHaveBeenCalledWith(4002, "插件版本不一致，请同时更新MarginNote端和Obsidian端");
+    expect(client.handshakeComplete).toBe(false);
+  });
+
+  test("records the MN remote-open capability after protocol 5 hello", async () => {
+    const bridge = new OstraconWsBridge(createHost());
+    const ws = { close: vi.fn(), send: vi.fn(), readyState: WebSocket.OPEN } as unknown as WebSocket;
+    const client = {
+      ws,
+      clientId: "client-1",
+      connectedAt: "2026-07-24T00:00:00.000Z",
+      lastSeenAt: "2026-07-24T00:00:00.000Z",
+      handshakeComplete: false,
+      capabilities: new Set<string>(),
+    };
+
+    await bridge.handleMessage(ws, client, {
+      type: "hello",
+      requestId: "hello-new",
+      payload: { protocolVersion: 5, pluginId: "ostracon-mn", capabilities: [OPEN_MARGIN_NOTE_URL_CAPABILITY] },
+    });
+
+    expect(client.handshakeComplete).toBe(true);
+    expect(client.capabilities.has(OPEN_MARGIN_NOTE_URL_CAPABILITY)).toBe(true);
   });
 
   test("accepts a plain submitPacket payload", async () => {

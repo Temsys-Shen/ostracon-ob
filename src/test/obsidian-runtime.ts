@@ -18,4 +18,6 @@ function normalizePath(value: string) {
   return value.replace(/^\/+|\/+$/g, "");
 }
 
-export { Component, MarkdownRenderer, MarkdownView, Notice, TFile, finishRenderMath, getAllTags, normalizePath };
+const editorLivePreviewField = {};
+
+export { Component, MarkdownRenderer, MarkdownView, Notice, TFile, editorLivePreviewField, finishRenderMath, getAllTags, normalizePath };

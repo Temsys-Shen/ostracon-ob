@@ -12,6 +12,9 @@ importers:
         specifier: ^7.2.0
         version: 7.2.0
     devDependencies:
+      '@codemirror/view':
+        specifier: 6.38.6
+        version: 6.38.6
       '@eslint/js':
         specifier: ^9.39.4
         version: 9.39.5

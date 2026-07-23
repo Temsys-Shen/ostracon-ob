@@ -1,5 +1,8 @@
 declare module "electron" {
   export const remote: {
+    app: {
+      getApplicationNameForProtocol(url: string): string;
+    };
     BrowserWindow: new (options: {
       show: false;
       width: number;
@@ -13,5 +16,8 @@ declare module "electron" {
       };
       destroy(): void;
     };
+  };
+  export const shell: {
+    openExternal(url: string): Promise<void>;
   };
 }
