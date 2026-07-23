@@ -78,7 +78,7 @@ describe("QuoteService", () => {
     });
     const service = new QuoteService(fixture.host);
     await expect(service.insert({ target: "cursor" })).resolves.toEqual({ ok: true, filePath: fixture.file.path });
-    expect(fixture.editor.replaceSelection).toHaveBeenCalledWith("> quote\n>\n> [MarginNote](marginnote4app://note/n1)");
+    expect(fixture.editor.replaceSelection).toHaveBeenCalledWith("> quote\n\n> [MarginNote](marginnote4app://note/n1)");
     expect(fixture.bridge.requestClientCommand).toHaveBeenCalledWith("getQuoteSelection", { createCard: true }, 30000);
   });
 

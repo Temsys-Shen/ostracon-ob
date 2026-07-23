@@ -35,7 +35,7 @@ describe("quote template", () => {
     expect(renderQuoteTemplate(DEFAULT_QUOTE_TEMPLATE, {
       content: "first\nsecond",
       link: "marginnote4app://note/1",
-    })).toBe("> first\n> second\n>\n> [MarginNote](marginnote4app://note/1)");
+    })).toBe("> first\n> second\n\n> [MarginNote](marginnote4app://note/1)");
   });
 
   test.each([
